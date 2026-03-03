@@ -1,4 +1,5 @@
 import type { SlideLayout, SlideContent, SlideSuggestion, SlideGenerationResult, Slide } from '../types/presentation';
+import { projectId, publicAnonKey } from '/utils/supabase/info';
 
 // ─── Topic knowledge graph for smart suggestions ───────────────────────────────
 const topicGraph: Record<string, Array<{ topic: string; description: string; emoji: string }>> = {
@@ -283,4 +284,50 @@ export function generateTitleSlide(presentationTitle: string): { layout: SlideLa
       subtitle: 'Press the microphone to begin speaking your presentation',
     },
   };
+}
+
+export async function generateSlideWithAI(
+  transcript: string,
+  previousSlides: Slide[],
+  presentationTitle: string,
+): Promise<SlideGenerationResult> {
+  const previousSlideTitles = previousSlides.map(s => s.content.title).slice(-6);
+
+  try {
+    const res = await fetch(
+      `https://${projectId}.supabase.co/functions/v1/make-server-8474fcb9/generate-slide`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({ transcript, presentationTitle, previousSlideTitles }),
+      },
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn('AI slide generation failed, falling back to local:', res.status, errText);
+      return generateSlideFromSpeech(transcript, previousSlides);
+    }
+
+    const data = await res.json();
+    if (data.error) {
+      console.warn('AI slide generation error, falling back to local:', data.error);
+      return generateSlideFromSpeech(transcript, previousSlides);
+    }
+
+    const layout: SlideLayout = data.layout;
+    const content: SlideContent = data.content;
+
+    // Strip the redundant "layout" key OpenAI echoes into the content object
+    delete (content as any).layout;
+
+    const suggestions = generateSuggestions(content.title, content.bullets ?? [], previousSlides);
+    return { layout, content, suggestions };
+  } catch (e) {
+    console.warn('AI slide generation threw, falling back to local:', e);
+    return generateSlideFromSpeech(transcript, previousSlides);
+  }
 }

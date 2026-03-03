@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
-import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery, generateSlideFromSpeech } from '../utils/slideGenerator';
+import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI } from '../utils/slideGenerator';
 import { fetchUnsplashImage } from '../utils/unsplash';
 import { LiveSlideView } from '../components/LiveSlideView';
 import {
@@ -318,8 +318,8 @@ export default function PresentationView() {
     const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
     if (!savedPres) { isGeneratingRef.current = false; return; }
 
-    // Intelligent layout + content determination from speech
-    const result = generateSlideFromSpeech(buffer.trim(), savedPres.slides);
+    // AI-powered layout + content determination from speech (falls back to local on error)
+    const result = await generateSlideWithAI(buffer.trim(), savedPres.slides, savedPres.title);
 
     setIsFetchingImage(true);
     const query = extractUnsplashQuery(result.content.title);
