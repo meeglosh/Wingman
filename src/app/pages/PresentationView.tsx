@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
+import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2, Captions } from 'lucide-react';
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
 import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI } from '../utils/slideGenerator';
@@ -18,6 +18,7 @@ import type { Presentation, Slide } from '../types/presentation';
 type PresentationPhase = 'loading' | 'intro' | 'speaking' | 'ended';
 
 const DEVICE_STORAGE_KEY = 'wingman-audio-device';
+const CC_STORAGE_PREFIX  = 'wingman-cc-';
 
 const IS_EMBEDDED = (() => {
   try { return window.self !== window.top; } catch { return true; }
@@ -223,6 +224,7 @@ export default function PresentationView() {
   const [activeBullets, setActiveBullets] = useState<string[]>([]);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [isFetchingImage, setIsFetchingImage] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [viewingSlideIdx, setViewingSlideIdx] = useState<number | null>(null); // for history panel review
   const [showHistory, setShowHistory] = useState(false);
   const [showAudioSettings, setShowAudioSettings] = useState(false);
@@ -232,6 +234,8 @@ export default function PresentationView() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
     () => localStorage.getItem(DEVICE_STORAGE_KEY) ?? '',
   );
+  // CC: off by default; persisted per presentation ID
+  const [showCC, setShowCC] = useState(false);
 
   // ── Refs to avoid stale closures ────────────────────────────────────────────
   const presentationRef = useRef<Presentation | null>(null);
@@ -314,9 +318,10 @@ export default function PresentationView() {
     const wordCount = buffer.trim().split(/\s+/).filter(Boolean).length;
     if (isGeneratingRef.current || wordCount < 5) return;
     isGeneratingRef.current = true;
+    setIsGenerating(true); // ← show "Composing next slide" immediately
 
     const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
-    if (!savedPres) { isGeneratingRef.current = false; return; }
+    if (!savedPres) { isGeneratingRef.current = false; setIsGenerating(false); return; }
 
     // AI-powered layout + content determination from speech (falls back to local on error)
     const result = await generateSlideWithAI(buffer.trim(), savedPres.slides, savedPres.title);
@@ -346,6 +351,7 @@ export default function PresentationView() {
     setActiveBullets([]);
     activeBulletsRef.current = [];
     setViewingSlideIdx(null);
+    setIsGenerating(false); // ← clear once slide is live
 
     isGeneratingRef.current = false;
   }, [finalizeCurrentSlide, addSlide]);
@@ -575,6 +581,21 @@ export default function PresentationView() {
     })();
   }, [id]);
 
+  // ── Load CC preference once id is known ────────────────────────────────────
+  useEffect(() => {
+    if (!id) return;
+    const stored = localStorage.getItem(`${CC_STORAGE_PREFIX}${id}`);
+    if (stored === 'true') setShowCC(true);
+  }, [id]);
+
+  const toggleCC = () => {
+    setShowCC(prev => {
+      const next = !prev;
+      if (id) localStorage.setItem(`${CC_STORAGE_PREFIX}${id}`, String(next));
+      return next;
+    });
+  };
+
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -619,6 +640,8 @@ export default function PresentationView() {
           : activeBullets}
         liveBullet={phase === 'speaking' && viewingSlideIdx === null ? liveTranscript : undefined}
         isLoading={isFetchingImage}
+        isGenerating={phase === 'speaking' && viewingSlideIdx === null ? isGenerating : false}
+        showCC={showCC}
         credit={displayCredit}
       />
 
@@ -825,14 +848,29 @@ export default function PresentationView() {
                 </span>
               </div>
 
-              {/* Right: Settings + history toggle + image loading indicator */}
+              {/* Right: CC + Settings + history toggle + image loading indicator */}
               <div className="flex items-center gap-2">
-                {isFetchingImage && (
+                {(isFetchingImage || isGenerating) && (
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: 'rgba(124,58,237,0.2)' }}>
                     <div className="w-3 h-3 rounded-full border-2 border-purple-400 border-t-transparent animate-spin" />
-                    <span style={{ color: '#A78BFA', fontSize: 11, fontWeight: 600 }}>New slide…</span>
+                    <span style={{ color: '#A78BFA', fontSize: 11, fontWeight: 600 }}>
+                      {isGenerating && !isFetchingImage ? 'Thinking…' : 'New slide…'}
+                    </span>
                   </div>
                 )}
+                {/* Closed-captions toggle */}
+                <button
+                  onClick={toggleCC}
+                  title={showCC ? 'Hide captions' : 'Show captions'}
+                  className="p-2 rounded-xl transition-all"
+                  style={{
+                    background: showCC ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.1)',
+                    color: showCC ? '#A78BFA' : 'rgba(255,255,255,0.7)',
+                    border: showCC ? '1px solid rgba(124,58,237,0.45)' : '1px solid transparent',
+                  }}
+                >
+                  <Captions size={16} />
+                </button>
                 <button
                   onClick={() => setShowHistory(v => !v)}
                   className="p-2 rounded-xl transition-colors"
