@@ -237,7 +237,7 @@ export default function Library() {
                   <PresentationCard
                     key={p.id}
                     presentation={p}
-                    onPresent={() => navigate(`/present/${p.id}`)}
+                    onPresent={() => navigate(`/playback/${p.id}`)}
                     onEdit={() => navigate(`/edit/${p.id}`)}
                     onDelete={() => removePresentation(p.id)}
                   />
