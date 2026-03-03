@@ -56,6 +56,7 @@ interface LiveSlideViewProps {
   isGenerating?: boolean;     // AI is actively composing the next slide
   showCC?: boolean;           // closed-captions strip
   credit?: { name: string; profileUrl: string };
+  fontFamily?: string;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@ export function LiveSlideView({
   isGenerating,
   showCC,
   credit,
+  fontFamily,
 }: LiveSlideViewProps) {
   const displayBullets = bullets.slice(-5);
 
@@ -233,7 +235,7 @@ export function LiveSlideView({
               fontWeight: 800,
               lineHeight: 1.08,
               letterSpacing: '-0.02em',
-              fontFamily: '"Space Grotesk", "Inter", system-ui, sans-serif',
+              fontFamily: fontFamily ?? '"Space Grotesk", "Inter", system-ui, sans-serif',
               textShadow: '0 4px 32px rgba(0,0,0,0.6)',
               marginBottom: 0,
             }}

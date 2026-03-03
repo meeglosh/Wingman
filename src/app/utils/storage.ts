@@ -33,13 +33,14 @@ export function getPresentation(id: string): Presentation | null {
   return loadPresentations().find(p => p.id === id) ?? null;
 }
 
-export function createNewPresentation(title: string, themeId = 'obsidian'): Presentation {
+export function createNewPresentation(title: string, themeId = 'obsidian', fontFamily?: string): Presentation {
   const now = Date.now();
   return {
     id: `pres_${now}_${Math.random().toString(36).slice(2, 8)}`,
     title,
     slides: [],
     themeId,
+    fontFamily,
     createdAt: now,
     updatedAt: now,
   };

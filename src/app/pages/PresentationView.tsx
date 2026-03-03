@@ -117,80 +117,169 @@ function extractTitleFromShift(afterPhrase: string, fullText: string): string {
 // ─── Speech Recognition Hook ─────────────────────────────────────────────────
 function useSpeechRecognition(
   onTranscript: (text: string, isFinal: boolean) => void,
-  onFatalError?: () => void,
+  onFatalError?: (reason: string) => void,
 ) {
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef    = useRef<any>(null);
   const [isSupported, setIsSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const shouldRestartRef = useRef(false);
+  const [error, setError]             = useState<string | null>(null);
+  const shouldRestartRef  = useRef(false);
+  const restartTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const consecutiveErrRef = useRef(0);
+
+  // Always-current callback refs so the closed-over effect never goes stale
   const onTranscriptRef = useRef(onTranscript);
+  const onFatalErrorRef = useRef(onFatalError);
   useEffect(() => { onTranscriptRef.current = onTranscript; });
+  useEffect(() => { onFatalErrorRef.current = onFatalError; });
 
   useEffect(() => {
-    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRec) return;
+    const SpeechRec =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      console.warn('[Wingman STT] Web Speech API not available in this browser.');
+      return;
+    }
     setIsSupported(true);
+
     const rec = new SpeechRec();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'en-US';
+    rec.continuous      = true;
+    rec.interimResults  = true;
+    rec.lang            = 'en-US';
     rec.maxAlternatives = 1;
 
+    // ── Diagnostic events ──────────────────────────────────────────
+    rec.onaudiostart  = () => console.log('[Wingman STT] Audio capture started ✓');
+    rec.onsoundstart  = () => console.log('[Wingman STT] Sound detected ✓');
+    rec.onspeechstart = () => console.log('[Wingman STT] Speech detected ✓');
+    rec.onspeechend   = () => console.log('[Wingman STT] Speech ended');
+    rec.onaudioend    = () => console.log('[Wingman STT] Audio capture ended');
+
     rec.onresult = (event: any) => {
+      consecutiveErrRef.current = 0; // successful result → reset error count
+      setError(null);
       let interim = '';
-      let final = '';
+      let final   = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) final += t;
-        else interim += t;
+        if (event.results[i].isFinal) final   += t;
+        else                           interim += t;
       }
-      if (final) onTranscriptRef.current(final, true);
+      if (final)        onTranscriptRef.current(final,   true);
       else if (interim) onTranscriptRef.current(interim, false);
     };
 
     rec.onerror = (e: any) => {
-      if (e.error === 'no-speech' || e.error === 'aborted') return;
-      console.error('Speech recognition error:', e.error);
-      if (e.error === 'not-allowed') {
-        shouldRestartRef.current = false;
-        setError('Microphone access was denied. Click the 🔒 in your browser address bar, allow the microphone, then try again.');
-        onFatalError?.();
+      console.error('[Wingman STT] Error:', e.error, e.message ?? '');
+
+      // 'aborted' fires when we call rec.stop()/rec.abort() ourselves — ignore
+      if (e.error === 'aborted') return;
+
+      // 'no-speech': normal timeout, onend will restart — clear any stale error
+      if (e.error === 'no-speech') {
+        setError(null);
         return;
       }
-      setError(`Speech error: ${e.error}`);
+
+      consecutiveErrRef.current += 1;
+
+      // Fatal errors: stop the restart loop and surface the problem to the user
+      const isFatal =
+        e.error === 'not-allowed'          ||
+        e.error === 'service-not-allowed'  ||
+        e.error === 'audio-capture'        || // was silently looping forever
+        consecutiveErrRef.current >= 4;
+
+      if (isFatal) {
+        shouldRestartRef.current = false;
+        const msg =
+          e.error === 'not-allowed' || e.error === 'service-not-allowed'
+            ? 'Microphone access denied. Allow it in your browser settings then click Retry.'
+            : e.error === 'audio-capture'
+              ? 'Could not capture audio from the microphone. Another app may have an exclusive lock on it, or the browser requires HTTPS.'
+              : `Speech recognition failed (${e.error}). Click Retry to try again.`;
+        setError(msg);
+        onFatalErrorRef.current?.(msg);
+      } else {
+        setError(`Speech error: ${e.error} — retrying…`);
+      }
     };
 
     rec.onend = () => {
+      console.log(
+        '[Wingman STT] Session ended. shouldRestart:', shouldRestartRef.current,
+        '| consecutiveErrors:', consecutiveErrRef.current,
+      );
       setIsListening(false);
-      if (shouldRestartRef.current) {
-        const t = setTimeout(() => {
-          if (!shouldRestartRef.current) return;
-          try { rec.start(); setIsListening(true); } catch (err) { console.warn('Restart failed:', err); }
-        }, 150);
-        return () => clearTimeout(t);
-      }
+
+      if (!shouldRestartRef.current) return;
+
+      // Clear any previously-scheduled restart before queuing another
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+
+      // Exponential back-off: 150 → 300 → 600 → 1 200 ms cap
+      const delay = Math.min(150 * Math.pow(2, consecutiveErrRef.current), 1200);
+      restartTimerRef.current = setTimeout(() => {
+        restartTimerRef.current = null;
+        if (!shouldRestartRef.current) return;
+        try {
+          rec.start();
+          setIsListening(true);
+          console.log('[Wingman STT] Restarted after', delay, 'ms');
+        } catch (err) {
+          console.warn('[Wingman STT] Restart threw:', err);
+        }
+      }, delay);
     };
 
     recognitionRef.current = rec;
-    return () => { shouldRestartRef.current = false; try { rec.abort(); } catch {} };
+
+    return () => {
+      shouldRestartRef.current = false;
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      try { rec.abort(); } catch {}
+    };
   }, []);
 
   const start = useCallback(() => {
-    if (!recognitionRef.current) return;
+    if (!recognitionRef.current) {
+      console.warn('[Wingman STT] start() called but recognition not initialised');
+      return;
+    }
     setError(null);
-    shouldRestartRef.current = true;
-    try { recognitionRef.current.start(); setIsListening(true); }
-    catch (e) { console.warn('Speech start (may already be running):', e); }
+    shouldRestartRef.current  = true;
+    consecutiveErrRef.current = 0;
+    try {
+      recognitionRef.current.start();
+      setIsListening(true);
+      console.log('[Wingman STT] Started');
+    } catch (e) {
+      console.warn('[Wingman STT] start() threw (may already be running):', e);
+    }
   }, []);
 
   const stop = useCallback(() => {
     shouldRestartRef.current = false;
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
     setIsListening(false);
     try { recognitionRef.current?.stop(); } catch {}
   }, []);
 
-  return { isSupported, isListening, error, start, stop };
+  const retry = useCallback(() => {
+    consecutiveErrRef.current = 0;
+    setError(null);
+    shouldRestartRef.current = true;
+    try {
+      recognitionRef.current?.start();
+      setIsListening(true);
+      console.log('[Wingman STT] Retried');
+    } catch (e) {
+      console.warn('[Wingman STT] retry start() threw:', e);
+    }
+  }, []);
+
+  return { isSupported, isListening, error, start, stop, retry };
 }
 
 // ─── Slide History Thumbnail ──────────────────────────────────────────────────
@@ -307,9 +396,12 @@ export default function PresentationView() {
 
   // ── Audio / mic ─────────────────────────────────────────────────────────────
   const { devices, loading: devicesLoading, error: devicesError, refresh: refreshDevices } = useAudioDevices();
+  // During speaking, always use the system default device so the visualiser
+  // reflects the SAME audio source the Web Speech API is listening to.
+  // (Web Speech API always uses the OS-level default; it ignores deviceId.)
   const { bars } = useAudioAnalyser(
-    phase === 'speaking' && micPermissionState === 'granted',
-    selectedDeviceId || undefined,
+    phase === 'speaking',
+    phase === 'speaking' ? undefined : (selectedDeviceId || undefined),
   );
 
   useEffect(() => {
@@ -574,13 +666,15 @@ export default function PresentationView() {
     }
   }, [endPresentation, startNewSlide, generateSlideFromBuffer]);
 
-  const { isSupported, error: speechError, start, stop } = useSpeechRecognition(
+  const { isSupported, isListening: sttListening, error: speechError, start, stop, retry: retrySpeech } = useSpeechRecognition(
     handleTranscript,
-    () => {
-      setPhase(prev => prev === 'speaking' ? 'speaking' : prev); // keep phase, just show error
-      setPermissionError(IS_EMBEDDED
-        ? 'Microphone is blocked in preview mode. Open this app in a new tab to use it.'
-        : "Microphone access denied.");
+    (reason: string) => {
+      // Fatal STT error — surface it as a permission/speech error banner
+      setPermissionError(
+        IS_EMBEDDED
+          ? 'Microphone is blocked in preview mode. Open this app in a new tab to use it.'
+          : reason,
+      );
     },
   );
 
@@ -748,6 +842,7 @@ export default function PresentationView() {
         isGenerating={phase === 'speaking' && viewingSlideIdx === null ? isGenerating : false}
         showCC={showCC}
         credit={displayCredit}
+        fontFamily={presentation.fontFamily}
       />
 
       {/* ── INTRO overlay ─────────────────────────────────────────── */}
@@ -1024,24 +1119,36 @@ export default function PresentationView() {
               className="absolute bottom-0 left-0 right-0 z-30 flex items-center gap-4 px-6 pb-6 pt-4"
               style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)' }}
             >
-              {/* Live mic indicator */}
+              {/* Live mic indicator — reflects actual STT state */}
               <div
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
-                style={{ background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.35)', flexShrink: 0 }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all"
+                style={{
+                  background: sttListening ? 'rgba(124,58,237,0.2)' : 'rgba(234,179,8,0.15)',
+                  border: sttListening ? '1px solid rgba(124,58,237,0.35)' : '1px solid rgba(234,179,8,0.35)',
+                  flexShrink: 0,
+                }}
               >
-                <div className="w-2 h-2 rounded-full bg-purple-400" style={{ animation: 'pulse 1s ease-in-out infinite' }} />
-                <span style={{ color: '#A78BFA', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em' }}>LIVE</span>
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{
+                    background: sttListening ? '#A78BFA' : '#FCD34D',
+                    animation: sttListening ? 'pulse 1s ease-in-out infinite' : 'none',
+                  }}
+                />
+                <span style={{ color: sttListening ? '#A78BFA' : '#FCD34D', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em' }}>
+                  {sttListening ? 'LIVE' : 'WAITING'}
+                </span>
               </div>
 
               {/* Waveform + transcript */}
               <div className="flex-1 flex items-center gap-4 min-w-0">
-                <WaveformVisualizer bars={bars} isListening={true} />
+                <WaveformVisualizer bars={bars} isListening={sttListening} />
                 {liveTranscript && (
                   <p className="text-sm truncate" style={{ color: 'rgba(255,255,255,0.5)', fontStyle: 'italic', fontSize: 13 }}>
                     {liveTranscript}
                   </p>
                 )}
-                {!liveTranscript && (
+                {!liveTranscript && sttListening && (
                   <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13 }}>
                     Listening
                     <span className="inline-flex gap-px ml-0.5">
@@ -1050,6 +1157,9 @@ export default function PresentationView() {
                       ))}
                     </span>
                   </p>
+                )}
+                {!liveTranscript && !sttListening && !speechError && (
+                  <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: 13 }}>Waiting for mic…</p>
                 )}
               </div>
 
@@ -1097,6 +1207,44 @@ export default function PresentationView() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* STT error banner (separate from permission error) */}
+            <AnimatePresence>
+              {speechError && !permissionError && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex items-start gap-3 px-5 py-3 rounded-2xl"
+                  style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', maxWidth: 560 }}
+                >
+                  <MicOff size={16} style={{ color: '#FCD34D', flexShrink: 0, marginTop: 2 }} />
+                  <p style={{ color: '#FCD34D', fontSize: 13, lineHeight: 1.5, flex: 1 }}>{speechError}</p>
+                  <button
+                    onClick={retrySpeech}
+                    className="flex-shrink-0 px-3 py-1 rounded-lg text-xs font-semibold transition-colors"
+                    style={{ background: 'rgba(234,179,8,0.2)', color: '#FCD34D', border: '1px solid rgba(234,179,8,0.35)' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(234,179,8,0.35)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(234,179,8,0.2)')}
+                  >
+                    Retry
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* "Speech API not supported" warning during speaking */}
+            {!isSupported && (
+              <div
+                className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl"
+                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', maxWidth: 500 }}
+              >
+                <MicOff size={16} style={{ color: '#F87171' }} />
+                <p style={{ color: '#F87171', fontSize: 13 }}>
+                  Speech recognition is not supported in this browser. Please use Chrome or Edge.
+                </p>
+              </div>
+            )}
           </>
         )}
       </AnimatePresence>
@@ -1160,12 +1308,12 @@ export default function PresentationView() {
         )}
       </AnimatePresence>
 
-      {/* Speech not supported warning */}
+      {/* "Speech API not supported" warning on intro screen */}
       {!isSupported && phase === 'intro' && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl z-50"
-          style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)' }}>
-          <p style={{ color: '#FCD34D', fontSize: 13 }}>
-            Speech recognition is not supported in this browser. Try Chrome or Edge.
+          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}>
+          <p style={{ color: '#F87171', fontSize: 13 }}>
+            Speech recognition is not available in this browser. Please use Chrome or Edge.
           </p>
         </div>
       )}

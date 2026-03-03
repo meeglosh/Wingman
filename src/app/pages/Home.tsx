@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { motion } from 'motion/react';
-import { Mic, ArrowRight, BookOpen, Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Mic, ArrowRight, BookOpen, Loader2, ChevronDown, Type } from 'lucide-react';
 import { usePresentations } from '../context/PresentationContext';
 import { createNewPresentation } from '../utils/storage';
 import { SLIDE_THEMES } from '../utils/themes';
+import { SLIDE_FONTS, DEFAULT_FONT_ID, getFont } from '../utils/fonts';
 
 // ─── Animated Glow Background ─────────────────────────────────────────────────
 function GlowBackground() {
@@ -46,14 +47,30 @@ export default function Home() {
 
   const [topic, setTopic] = useState('');
   const [themeId, setThemeId] = useState('obsidian');
+  const [fontId, setFontId] = useState(DEFAULT_FONT_ID);
   const [isGenerating, setIsGenerating] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [fontPickerOpen, setFontPickerOpen] = useState(false);
+  const fontPickerRef = useRef<HTMLDivElement>(null);
+
+  // Close font picker on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (fontPickerRef.current && !fontPickerRef.current.contains(e.target as Node)) {
+        setFontPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const selectedFont = getFont(fontId);
 
   const handleGenerate = () => {
     const trimmed = topic.trim();
     if (!trimmed || isGenerating) return;
     setIsGenerating(true);
-    const presentation = createNewPresentation(trimmed, themeId);
+    const presentation = createNewPresentation(trimmed, themeId, selectedFont.family);
     saveOrUpdate(presentation);
     navigate(`/present/${presentation.id}`);
   };
@@ -170,10 +187,10 @@ export default function Home() {
               }}
             />
 
-            {/* Bottom row: theme selector + generate button */}
+            {/* Bottom row: theme selector + font selector + generate button */}
             <div className="flex items-center gap-3 px-4 pb-3 pt-1">
               {/* Theme selector */}
-              <div className="flex items-center gap-1.5 flex-1">
+              <div className="flex items-center gap-1.5">
                 {SLIDE_THEMES.map(t => {
                   const bg = t.background.match(/#([0-9A-Fa-f]{6})/g)?.[0] ?? '#111';
                   return (
@@ -196,6 +213,108 @@ export default function Home() {
                   theme
                 </span>
               </div>
+
+              {/* Divider */}
+              <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.1)', flexShrink: 0 }} />
+
+              {/* Font picker */}
+              <div className="relative" ref={fontPickerRef}>
+                <button
+                  onClick={() => setFontPickerOpen(v => !v)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all"
+                  style={{
+                    background: fontPickerOpen ? 'rgba(124,58,237,0.18)' : 'rgba(255,255,255,0.06)',
+                    border: fontPickerOpen ? '1px solid rgba(124,58,237,0.4)' : '1px solid rgba(255,255,255,0.1)',
+                    color: fontPickerOpen ? '#C4B5FD' : '#94A3B8',
+                  }}
+                >
+                  <Type size={11} />
+                  <span style={{ fontSize: 12, fontWeight: 600, fontFamily: selectedFont.family, letterSpacing: '-0.01em' }}>
+                    {selectedFont.name}
+                  </span>
+                  <ChevronDown
+                    size={10}
+                    style={{
+                      transform: fontPickerOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s',
+                      opacity: 0.6,
+                    }}
+                  />
+                </button>
+
+                {/* Font dropdown */}
+                <AnimatePresence>
+                  {fontPickerOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 4, scale: 0.97 }}
+                      transition={{ duration: 0.15, ease: 'easeOut' }}
+                      className="absolute bottom-full left-0 mb-2 rounded-2xl overflow-hidden z-50"
+                      style={{
+                        background: '#141520',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        boxShadow: '0 16px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(124,58,237,0.1)',
+                        minWidth: 240,
+                      }}
+                    >
+                      <div className="px-3 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+                        <p style={{ color: '#475569', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                          Presentation Font
+                        </p>
+                      </div>
+                      <div className="py-1.5">
+                        {SLIDE_FONTS.map(font => {
+                          const isActive = font.id === fontId;
+                          return (
+                            <button
+                              key={font.id}
+                              onClick={() => { setFontId(font.id); setFontPickerOpen(false); }}
+                              className="w-full flex items-center justify-between px-3 py-2 transition-colors text-left"
+                              style={{
+                                background: isActive ? 'rgba(124,58,237,0.15)' : 'transparent',
+                              }}
+                              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                            >
+                              <div className="flex items-baseline gap-3">
+                                {/* Large "Aa" preview in the font itself */}
+                                <span
+                                  style={{
+                                    fontFamily: font.family,
+                                    fontSize: 18,
+                                    fontWeight: 700,
+                                    color: isActive ? '#C4B5FD' : 'rgba(255,255,255,0.8)',
+                                    lineHeight: 1,
+                                    minWidth: 28,
+                                  }}
+                                >
+                                  Aa
+                                </span>
+                                <div>
+                                  <p style={{ fontFamily: font.family, fontSize: 13, fontWeight: 600, color: isActive ? '#C4B5FD' : '#E2E8F0', lineHeight: 1.2 }}>
+                                    {font.name}
+                                  </p>
+                                  <p style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>{font.style} · {font.serif ? 'Serif' : 'Sans'}</p>
+                                </div>
+                              </div>
+                              {isActive && (
+                                <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#7C3AED' }}>
+                                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none">
+                                    <path d="M5 13l4 4L19 7" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="flex-1" />
 
               {/* Generate button */}
               <motion.button
