@@ -88,7 +88,36 @@ const FORCE_NEXT_PHRASES = [
   "next slide",
   "next page please",
   "go to next slide",
+  "new slide please",
+  "new slide",
 ];
+
+// ─── Explicit voice commands ──────────────────────────────────────────────────
+type VoiceCommand =
+  | { type: 'new_bullet';     arg: string }
+  | { type: 'new_title';      arg: string }
+  | { type: 'new_background'; arg: string };
+
+// Each pattern must appear at the very START of the trimmed utterance
+const CMD_PATTERNS: Array<{ re: RegExp; type: VoiceCommand['type'] }> = [
+  // Bullet commands
+  { re: /^(new bullet( point)?|add( a)? (new )?bullet( point)?)[,.]?\s*/i, type: 'new_bullet' },
+  // Title commands
+  { re: /^(new title|add( a)? (new )?title|change( the)? title|update( the)? title)[,.]?\s*/i, type: 'new_title' },
+  // Background commands
+  { re: /^(new background|change( the)? background|update( the)? background)[,.]?\s*/i, type: 'new_background' },
+];
+
+function detectVoiceCommand(text: string): VoiceCommand | null {
+  const trimmed = text.trim();
+  for (const { re, type } of CMD_PATTERNS) {
+    const m = trimmed.match(re);
+    if (m) {
+      return { type, arg: trimmed.slice(m[0].length).trim() };
+    }
+  }
+  return null;
+}
 
 /**
  * If text contains a force-next trigger, returns the content that came AFTER
@@ -318,6 +347,7 @@ function useWhisperSTT(
     let cancelled = false;
     let stream: MediaStream | null = null;
     let recorder: MediaRecorder | null = null;
+    let consecutiveErrors = 0; // only surface errors after several consecutive failures
     // Detect best supported mime type for Whisper
     const mimeType =
       MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
@@ -355,17 +385,23 @@ function useWhisperSTT(
             );
             if (res.ok) {
               const { text } = await res.json();
+              consecutiveErrors = 0;       // success — reset counter
+              if (!cancelled) setError(null); // clear any previous error
               if (text && !isWhisperNoise(text)) {
                 console.log('[Whisper STT] Transcript:', text);
                 onTranscriptRef.current(text.trim(), true);
               }
             } else {
+              consecutiveErrors++;
               const err = await res.text();
               console.warn('[Whisper STT] Server error:', err);
-              if (!cancelled) setError(`Whisper error: ${res.status}`);
+              // Only surface the error after 3 consecutive failures
+              if (!cancelled && consecutiveErrors >= 3) setError(`Transcription unavailable (${res.status}). Check your connection.`);
             }
           } catch (fetchErr) {
+            consecutiveErrors++;
             console.warn('[Whisper STT] Fetch error:', fetchErr);
+            if (!cancelled && consecutiveErrors >= 3) setError('Transcription unavailable. Check your connection.');
           }
         } else {
           console.log('[Whisper STT] Chunk too small (silence?), skipping');
@@ -487,6 +523,10 @@ export default function PresentationView() {
   // STT mode: try Web Speech API first; auto-fall back to Whisper on network errors
   // Pre-select Whisper when embedded (iframe) since Web Speech API is always blocked there
   const [sttMode, setSttMode] = useState<'webspeech' | 'whisper'>(IS_EMBEDDED ? 'whisper' : 'webspeech');
+  // Voice-command feedback toast  (keyed by counter so repeated same command re-animates)
+  const [cmdFeedback, setCmdFeedback] = useState<{ msg: string; id: number } | null>(null);
+  const cmdFeedbackTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cmdFeedbackCounterRef = useRef(0);
 
   // ── Refs to avoid stale closures ────────────────────────────────────────────
   const presentationRef = useRef<Presentation | null>(null);
@@ -711,6 +751,71 @@ export default function PresentationView() {
     setLiveTranscript('');
   }, [finalizeCurrentSlide, saveOrUpdate]);
 
+  // ── Flash a brief voice-command confirmation toast ─────────────────────────
+  const flashCmdFeedback = useCallback((msg: string) => {
+    if (cmdFeedbackTimerRef.current) clearTimeout(cmdFeedbackTimerRef.current);
+    cmdFeedbackCounterRef.current += 1;
+    setCmdFeedback({ msg, id: cmdFeedbackCounterRef.current });
+    cmdFeedbackTimerRef.current = setTimeout(() => setCmdFeedback(null), 2200);
+  }, []);
+
+  // ── Add an explicit bullet (voice command) ─────────────────────────────────
+  const addExplicitBullet = useCallback((text: string) => {
+    const bullet = cleanBullet(text);
+    if (!bullet || bullet.length < 3) return;
+    console.log('[Wingman CMD] new_bullet:', bullet);
+    flashCmdFeedback(`Bullet added`);
+    setActiveBullets(prev => {
+      const next = [...prev, bullet].slice(-5);
+      activeBulletsRef.current = next;
+      return next;
+    });
+    // Add to buffer so AI eventually has context
+    transcriptBufferRef.current += (transcriptBufferRef.current ? ' ' : '') + text;
+  }, [flashCmdFeedback]);
+
+  // ── Update current slide title (voice command) ─────────────────────────────
+  const updateCurrentSlideTitle = useCallback((titleText: string) => {
+    const pres    = presentationRef.current;
+    const slideId = activeSlideIdRef.current;
+    if (!pres || !slideId || !titleText) return;
+    const slide = pres.slides.find(s => s.id === slideId);
+    if (!slide) return;
+    const title = toTitleCase(titleText.replace(/[.!?]+$/, '').trim().slice(0, 80));
+    console.log('[Wingman CMD] new_title:', title);
+    flashCmdFeedback(`Title → "${title}"`);
+    const updated = updateSlide(pres, { ...slide, content: { ...slide.content, title } });
+    setPresentation(updated);
+    presentationRef.current = updated;
+  }, [updateSlide, flashCmdFeedback]);
+
+  // ── Refresh background image for current slide (voice command) ─────────────
+  const refreshBackground = useCallback(async (query: string) => {
+    const pres    = presentationRef.current;
+    const slideId = activeSlideIdRef.current;
+    if (!pres || !slideId) return;
+    const slide = pres.slides.find(s => s.id === slideId);
+    if (!slide) return;
+    const q = query || extractUnsplashQuery(slide.content.title);
+    console.log('[Wingman CMD] new_background query:', q);
+    flashCmdFeedback(`Fetching image for "${q}"`);
+    setIsFetchingImage(true);
+    const image = await fetchUnsplashImage(q);
+    setIsFetchingImage(false);
+    if (!image) return;
+    const currentPres = presentationRef.current;
+    const target = currentPres?.slides.find(s => s.id === slideId);
+    if (!currentPres || !target) return;
+    const updated = updateSlide(currentPres, {
+      ...target,
+      backgroundImageUrl: image.url,
+      backgroundImageAlt: image.alt,
+      unsplashCredit: image.credit,
+    });
+    setPresentation(updated);
+    presentationRef.current = updated;
+  }, [updateSlide, flashCmdFeedback]);
+
   // ── Speech transcript handler ───────────────────────────────────────────────
   const handleTranscript = useCallback((text: string, isFinal: boolean) => {
     if (!isFinal) {
@@ -721,6 +826,20 @@ export default function PresentationView() {
     setLiveTranscript('');
 
     if (phaseRef.current !== 'speaking') return;
+
+    // ── Explicit voice commands ─────────────────────────────────────────────
+    // Checked before end-phrases so commands take unconditional priority.
+    const cmd = detectVoiceCommand(text);
+    if (cmd) {
+      if (cmd.type === 'new_bullet') {
+        if (cmd.arg) addExplicitBullet(cmd.arg);
+      } else if (cmd.type === 'new_title') {
+        if (cmd.arg) updateCurrentSlideTitle(cmd.arg);
+      } else if (cmd.type === 'new_background') {
+        refreshBackground(cmd.arg); // arg may be empty → falls back to slide title
+      }
+      return; // never fall through to buffer accumulation
+    }
 
     // ── End phrase ──────────────────────────────────────────────────────────
     if (detectEndPhrase(text)) {
@@ -752,6 +871,7 @@ export default function PresentationView() {
     // ── Force-next slide → flush current buffer, then start new slide ──────
     const forceNextContext = detectForceNext(text);
     if (forceNextContext !== null) {
+      flashCmdFeedback('Next slide →');
       const currentBuffer = transcriptBufferRef.current.trim();
       transcriptBufferRef.current = '';
       lastSlideTimeRef.current = Date.now();
@@ -794,7 +914,7 @@ export default function PresentationView() {
       lastSlideTimeRef.current = Date.now();
       generateSlideFromBuffer(buffer);
     }
-  }, [endPresentation, startNewSlide, generateSlideFromBuffer]);
+  }, [endPresentation, startNewSlide, generateSlideFromBuffer, addExplicitBullet, updateCurrentSlideTitle, refreshBackground, flashCmdFeedback]);
 
   const { isSupported, isListening: wsListening, error: wsError, start: wsStart, stop: wsStop, retry: wsRetry } = useSpeechRecognition(
     handleTranscript,
@@ -1404,17 +1524,44 @@ export default function PresentationView() {
               )}
             </AnimatePresence>
 
-            {/* Whisper-mode info badge — only visible briefly on switch */}
-            {sttMode === 'whisper' && sttListening && !speechError && (
-              <div
+            {/* Voice-command feedback toast */}
+            <AnimatePresence>
+              {cmdFeedback && (
+                <motion.div
+                  key={cmdFeedback.id}
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
+                  className="absolute bottom-28 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl pointer-events-none"
+                  style={{ background: 'rgba(124,58,237,0.25)', border: '1px solid rgba(167,139,250,0.35)', backdropFilter: 'blur(12px)' }}
+                >
+                  <span style={{ fontSize: 11, color: '#C4B5FD', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    ⌘ Command
+                  </span>
+                  <span style={{ width: 1, height: 12, background: 'rgba(167,139,250,0.3)', display: 'inline-block' }} />
+                  <span style={{ fontSize: 13, color: '#E9D5FF', fontWeight: 500 }}>{cmdFeedback.msg}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Whisper-mode info badge — always visible while in Whisper mode, good-faith UX */}
+            {sttMode === 'whisper' && !speechError && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
                 className="absolute top-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2 rounded-xl"
                 style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.25)' }}
               >
-                <div className="w-1.5 h-1.5 rounded-full bg-purple-400" style={{ animation: 'pulse 1.2s ease-in-out infinite' }} />
+                <div
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ background: '#A78BFA', animation: whisperListening ? 'pulse 1.2s ease-in-out infinite' : 'none', opacity: whisperListening ? 1 : 0.4 }}
+                />
                 <p style={{ color: '#A78BFA', fontSize: 12, fontWeight: 600 }}>
                   Whisper AI · transcribing every 5 s
                 </p>
-              </div>
+              </motion.div>
             )}
           </>
         )}
