@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2, Captions } from 'lucide-react';
+import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2, Captions, Play } from 'lucide-react';
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
 import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI } from '../utils/slideGenerator';
@@ -47,7 +47,6 @@ function detectEndPhrase(text: string): boolean {
 const THEME_SHIFT_PHRASES = [
   "now let's talk about", "now let's look at", "now let's move to", "now let's discuss",
   "moving on to", "moving on,",
-  "next up,", "next,", "next slide",
   "turning now to", "turning to",
   "let's move on to", "let's now look at", "let's now talk about",
   "let's discuss", "let's explore",
@@ -61,13 +60,30 @@ const THEME_SHIFT_PHRASES = [
   "the next topic", "the next section",
 ];
 
-function detectThemeShift(text: string): string | null {
+// ─── Force-next slide phrases ─────────────────────────────────────────────────
+// These trigger immediate slide generation from the current buffer, regardless
+// of word count. "next slide" / "next slide please" are the primary triggers.
+const FORCE_NEXT_PHRASES = [
+  "next slide please",
+  "next slide, please",
+  "go to the next slide",
+  "move to the next slide",
+  "advance to the next slide",
+  "next slide",
+  "next page please",
+  "go to next slide",
+];
+
+/**
+ * If text contains a force-next trigger, returns the content that came AFTER
+ * the trigger phrase (to seed the next slide's buffer), otherwise null.
+ */
+function detectForceNext(text: string): string | null {
   const lower = text.toLowerCase();
-  for (const phrase of THEME_SHIFT_PHRASES) {
+  for (const phrase of FORCE_NEXT_PHRASES) {
     const idx = lower.indexOf(phrase);
     if (idx >= 0) {
-      const after = text.slice(idx + phrase.length).trim();
-      return after || text;
+      return text.slice(idx + phrase.length).replace(/^[\s,;.]+/, '').trim();
     }
   }
   return null;
@@ -315,85 +331,135 @@ export default function PresentationView() {
   }, [updateSlide]);
 
   // ── Generate a new slide from buffered transcript ──────────────────────────
-  const generateSlideFromBuffer = useCallback(async (buffer: string) => {
+  // Two-phase: Phase 1 → call AI + create slide immediately so the title appears
+  // within ~1–2 s. Phase 2 → fetch background image in the background and update
+  // the slide in place so the crossfade fires once the image is ready.
+  const generateSlideFromBuffer = useCallback(async (buffer: string, minWords = 5) => {
     const wordCount = buffer.trim().split(/\s+/).filter(Boolean).length;
-    if (isGeneratingRef.current || wordCount < 5) return;
+    if (isGeneratingRef.current || wordCount < minWords) return;
     isGeneratingRef.current = true;
-    setIsGenerating(true); // ← show "Composing next slide" immediately
+    setIsGenerating(true); // ← shimmer bar + "Composing next slide" pill
 
     const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
     if (!savedPres) { isGeneratingRef.current = false; setIsGenerating(false); return; }
 
-    // AI-powered layout + content determination from speech (falls back to local on error)
-    const result = await generateSlideWithAI(buffer.trim(), savedPres.slides, savedPres.title);
+    try {
+      // ── Phase 1: AI generates title + layout + bullets (~1–2 s) ─────────
+      const result = await generateSlideWithAI(buffer.trim(), savedPres.slides, savedPres.title);
 
-    setIsFetchingImage(true);
-    const query = extractUnsplashQuery(result.content.title);
-    const image = await fetchUnsplashImage(query);
-    setIsFetchingImage(false);
+      // Create the slide immediately — no background image yet.
+      // The gradient fallback will show until Phase 2 completes.
+      const slideData: Omit<Slide, 'id'> = {
+        layout: result.layout,
+        content: result.content,
+        backgroundImageUrl: undefined,
+        backgroundImageAlt: undefined,
+        unsplashCredit: undefined,
+        transcript: buffer.trim(),
+        generatedAt: Date.now(),
+      };
 
-    const slideData: Omit<Slide, 'id'> = {
-      layout: result.layout,
-      content: result.content,
-      backgroundImageUrl: image?.url,
-      backgroundImageAlt: image?.alt,
-      unsplashCredit: image?.credit,
-      transcript: buffer.trim(),
-      generatedAt: Date.now(),
-    };
+      const updated = addSlide(savedPres, slideData);
+      const newSlide = updated.slides[updated.slides.length - 1];
+      const newSlideId = newSlide.id; // capture for Phase 2 closure
 
-    const updated = addSlide(savedPres, slideData);
-    const newSlide = updated.slides[updated.slides.length - 1];
+      // Activate the new slide right now — user sees title + bullets immediately
+      setPresentation(updated);
+      presentationRef.current = updated;
+      setActiveSlideId(newSlideId);
+      activeSlideIdRef.current = newSlideId;
+      setActiveBullets([]);
+      activeBulletsRef.current = [];
+      setViewingSlideIdx(null);
+      setIsGenerating(false);       // composing pill disappears
+      isGeneratingRef.current = false; // allow next generation while image loads
 
-    setPresentation(updated);
-    presentationRef.current = updated;
-    setActiveSlideId(newSlide.id);
-    activeSlideIdRef.current = newSlide.id;
-    setActiveBullets([]);
-    activeBulletsRef.current = [];
-    setViewingSlideIdx(null);
-    setIsGenerating(false); // ← clear once slide is live
+      // ── Phase 2: fetch background image in background ────────────────────
+      setIsFetchingImage(true);
+      const query = extractUnsplashQuery(result.content.title);
+      const image = await fetchUnsplashImage(query);
+      setIsFetchingImage(false);
 
-    isGeneratingRef.current = false;
-  }, [finalizeCurrentSlide, addSlide]);
+      if (image) {
+        // Safely update only the slide we just created (presentation may have
+        // grown while the image was fetching — always read from the ref)
+        const currentPres = presentationRef.current;
+        if (!currentPres) return;
+        const target = currentPres.slides.find(s => s.id === newSlideId);
+        if (!target) return;
+        const withBg = updateSlide(currentPres, {
+          ...target,
+          backgroundImageUrl: image.url,
+          backgroundImageAlt: image.alt,
+          unsplashCredit: image.credit,
+        });
+        setPresentation(withBg);
+        presentationRef.current = withBg;
+      }
+    } catch (err) {
+      console.error('generateSlideFromBuffer error:', err);
+      setIsGenerating(false);
+      isGeneratingRef.current = false;
+      setIsFetchingImage(false);
+    }
+  }, [finalizeCurrentSlide, addSlide, updateSlide]);
 
-  // ── Add a new slide (explicit theme shift) ────────────────────────────────
+  // ── Add a new slide (explicit theme shift / force-next with thin buffer) ──
+  // Same two-phase approach: create the slide shell immediately, fetch the
+  // image in the background so it crossfades in once ready.
   const startNewSlide = useCallback(async (themeContext: string) => {
-    // Reset buffer + timer for the new section
     transcriptBufferRef.current = '';
     lastSlideTimeRef.current = Date.now();
 
     const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
     if (!savedPres) return;
 
-    const title = extractTitleFromShift(themeContext, themeContext);
+    const title = extractTitleFromShift(themeContext, themeContext) || 'Next Section';
 
-    setIsFetchingImage(true);
-    const query = extractUnsplashQuery(title);
-    const image = await fetchUnsplashImage(query);
-    setIsFetchingImage(false);
-
+    // Phase 1: create slide with title immediately (no image yet)
     const slideData: Omit<Slide, 'id'> = {
       layout: 'bullets',
       content: { title, bullets: [] },
-      backgroundImageUrl: image?.url,
-      backgroundImageAlt: image?.alt,
-      unsplashCredit: image?.credit,
+      backgroundImageUrl: undefined,
+      backgroundImageAlt: undefined,
+      unsplashCredit: undefined,
       transcript: '',
       generatedAt: Date.now(),
     };
 
     const updated = addSlide(savedPres, slideData);
     const newSlide = updated.slides[updated.slides.length - 1];
+    const newSlideId = newSlide.id;
 
     setPresentation(updated);
     presentationRef.current = updated;
-    setActiveSlideId(newSlide.id);
-    activeSlideIdRef.current = newSlide.id;
+    setActiveSlideId(newSlideId);
+    activeSlideIdRef.current = newSlideId;
     setActiveBullets([]);
     activeBulletsRef.current = [];
     setViewingSlideIdx(null);
-  }, [finalizeCurrentSlide, addSlide]);
+
+    // Phase 2: image in background
+    setIsFetchingImage(true);
+    const query = extractUnsplashQuery(title);
+    const image = await fetchUnsplashImage(query);
+    setIsFetchingImage(false);
+
+    if (image) {
+      const currentPres = presentationRef.current;
+      if (!currentPres) return;
+      const target = currentPres.slides.find(s => s.id === newSlideId);
+      if (!target) return;
+      const withBg = updateSlide(currentPres, {
+        ...target,
+        backgroundImageUrl: image.url,
+        backgroundImageAlt: image.alt,
+        unsplashCredit: image.credit,
+      });
+      setPresentation(withBg);
+      presentationRef.current = withBg;
+    }
+  }, [finalizeCurrentSlide, addSlide, updateSlide]);
 
   // ── End presentation ───────────────────────────────────────────────────────
   const endPresentation = useCallback(() => {
@@ -442,6 +508,27 @@ export default function PresentationView() {
         // Buffer too short for its own slide; use the legacy theme-shift handler
         startNewSlide(extractTitleFromShift(afterShift, text));
         transcriptBufferRef.current = afterShift;
+      }
+      return;
+    }
+
+    // ── Force-next slide → flush current buffer, then start new slide ──────
+    const forceNextContext = detectForceNext(text);
+    if (forceNextContext !== null) {
+      const currentBuffer = transcriptBufferRef.current.trim();
+      transcriptBufferRef.current = '';
+      lastSlideTimeRef.current = Date.now();
+
+      if (currentBuffer.split(/\s+/).filter(Boolean).length >= 10) {
+        // Enough buffered content → generate a slide from it, then
+        // seed the next buffer with the post-shift context
+        generateSlideFromBuffer(currentBuffer).then(() => {
+          transcriptBufferRef.current = forceNextContext;
+        });
+      } else {
+        // Buffer too short for its own slide; use the legacy theme-shift handler
+        startNewSlide(extractTitleFromShift(forceNextContext, text));
+        transcriptBufferRef.current = forceNextContext;
       }
       return;
     }
@@ -789,6 +876,23 @@ export default function PresentationView() {
               >
                 <Edit3 size={18} />
                 Edit this presentation
+              </motion.button>
+
+              <motion.button
+                onClick={() => navigate(`/playback/${presentation.id}`)}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-base font-semibold mb-3"
+                style={{
+                  background: 'rgba(255,255,255,0.07)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: 'rgba(255,255,255,0.85)',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.11)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
+              >
+                <Play size={16} fill="currentColor" />
+                Replay presentation
               </motion.button>
 
               <div className="flex gap-3">

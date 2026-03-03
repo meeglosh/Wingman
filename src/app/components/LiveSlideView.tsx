@@ -91,12 +91,17 @@ export function LiveSlideView({
       prevBgRef.current = backgroundImageUrl;
       clearTimeout(titleTimerRef.current);
 
-      // Let the background begin crossfading first, then swap the title
+      // Let the background begin crossfading first, then swap the title —
+      // but ONLY if the title itself actually changed. If only the image
+      // updated (Phase 2 background-fetch arriving), don't re-animate.
       titleTimerRef.current = setTimeout(() => {
+        const titleChanged = title !== displayedTitleRef.current;
         displayedTitleRef.current = title;
         setDisplayedTitle(title);
-        setTitleKey(k => k + 1);
-        setVariantSeqIdx(i => (i + 1) % VARIANT_SEQUENCE.length);
+        if (titleChanged) {
+          setTitleKey(k => k + 1);
+          setVariantSeqIdx(i => (i + 1) % VARIANT_SEQUENCE.length);
+        }
       }, 660);
     } else if (title !== displayedTitleRef.current) {
       // No bg change — apply title immediately (e.g. first load)
