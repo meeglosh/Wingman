@@ -306,7 +306,7 @@ export default function PresentationView() {
     : activeSlide;
 
   // ── Audio / mic ─────────────────────────────────────────────────────────────
-  const { devices } = useAudioDevices();
+  const { devices, loading: devicesLoading, error: devicesError, refresh: refreshDevices } = useAudioDevices();
   const { bars } = useAudioAnalyser(
     phase === 'speaking' && micPermissionState === 'granted',
     selectedDeviceId || undefined,
@@ -1001,9 +1001,15 @@ export default function PresentationView() {
                   <Layers size={16} />
                 </button>
                 <button
-                  onClick={() => setShowAudioSettings(v => !v)}
+                  onClick={() => {
+                    setShowAudioSettings(v => {
+                      if (!v) refreshDevices(); // load devices when opening
+                      return !v;
+                    });
+                  }}
                   className="p-2 rounded-xl transition-colors"
-                  style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}
+                  style={{ background: showAudioSettings ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.1)', color: showAudioSettings ? '#A78BFA' : 'rgba(255,255,255,0.7)' }}
+                  title="Audio input settings"
                 >
                   <Settings2 size={16} />
                 </button>
@@ -1140,20 +1146,17 @@ export default function PresentationView() {
       {/* ── Audio settings panel ────────────────────────────────────── */}
       <AnimatePresence>
         {showAudioSettings && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: -8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="absolute top-16 right-6 z-50"
-            style={{ width: 320 }}
-          >
+          <div className="absolute top-16 right-6 z-50">
             <AudioDeviceSettings
               devices={devices}
+              loading={devicesLoading}
+              error={devicesError}
               selectedDeviceId={selectedDeviceId}
               onSelect={id => { setSelectedDeviceId(id); setShowAudioSettings(false); }}
               onClose={() => setShowAudioSettings(false)}
+              onRefresh={refreshDevices}
             />
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
