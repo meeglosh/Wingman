@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
-import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery } from '../utils/slideGenerator';
+import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery, generateSlideFromSpeech } from '../utils/slideGenerator';
 import { fetchUnsplashImage } from '../utils/unsplash';
 import { LiveSlideView } from '../components/LiveSlideView';
 import {
@@ -238,8 +238,18 @@ export default function PresentationView() {
   const activeSlideIdRef = useRef<string | null>(null);
   const activeBulletsRef = useRef<string[]>([]);
   const phaseRef = useRef<PresentationPhase>('loading');
-  // stopRef breaks the circular dep: endPresentation → stop → useSpeechRecognition → handleTranscript → endPresentation
   const stopRef = useRef<() => void>(() => {});
+
+  // ── Speech buffer refs ───────────────────────────────────────────────────────
+  // Accumulates final transcript chunks; flushed when enough content builds up
+  const transcriptBufferRef = useRef<string>('');
+  const lastSlideTimeRef = useRef<number>(Date.now());
+  const isGeneratingRef = useRef<boolean>(false);
+
+  // Thresholds for auto-generating a new slide
+  const WORD_THRESHOLD = 35;   // ~15 s of natural speech
+  const TIME_THRESHOLD = 22000; // hard cap: generate after 22 s even if fewer words
+  const MIN_WORDS_FOR_TIME = 12; // don't generate on timer if barely any content
 
   const syncState = (p: Presentation | null, slideId: string | null, bullets: string[], ph: PresentationPhase) => {
     presentationRef.current = p;
@@ -299,22 +309,63 @@ export default function PresentationView() {
     return updated;
   }, [updateSlide]);
 
-  // ── Add a new slide (theme shift) ─────────────────────────────────────────
+  // ── Generate a new slide from buffered transcript ──────────────────────────
+  const generateSlideFromBuffer = useCallback(async (buffer: string) => {
+    const wordCount = buffer.trim().split(/\s+/).filter(Boolean).length;
+    if (isGeneratingRef.current || wordCount < 5) return;
+    isGeneratingRef.current = true;
+
+    const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
+    if (!savedPres) { isGeneratingRef.current = false; return; }
+
+    // Intelligent layout + content determination from speech
+    const result = generateSlideFromSpeech(buffer.trim(), savedPres.slides);
+
+    setIsFetchingImage(true);
+    const query = extractUnsplashQuery(result.content.title);
+    const image = await fetchUnsplashImage(query);
+    setIsFetchingImage(false);
+
+    const slideData: Omit<Slide, 'id'> = {
+      layout: result.layout,
+      content: result.content,
+      backgroundImageUrl: image?.url,
+      backgroundImageAlt: image?.alt,
+      unsplashCredit: image?.credit,
+      transcript: buffer.trim(),
+      generatedAt: Date.now(),
+    };
+
+    const updated = addSlide(savedPres, slideData);
+    const newSlide = updated.slides[updated.slides.length - 1];
+
+    setPresentation(updated);
+    presentationRef.current = updated;
+    setActiveSlideId(newSlide.id);
+    activeSlideIdRef.current = newSlide.id;
+    setActiveBullets([]);
+    activeBulletsRef.current = [];
+    setViewingSlideIdx(null);
+
+    isGeneratingRef.current = false;
+  }, [finalizeCurrentSlide, addSlide]);
+
+  // ── Add a new slide (explicit theme shift) ────────────────────────────────
   const startNewSlide = useCallback(async (themeContext: string) => {
-    // 1. Finalize current
+    // Reset buffer + timer for the new section
+    transcriptBufferRef.current = '';
+    lastSlideTimeRef.current = Date.now();
+
     const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
     if (!savedPres) return;
 
-    // 2. Build title
     const title = extractTitleFromShift(themeContext, themeContext);
 
-    // 3. Fetch image
     setIsFetchingImage(true);
     const query = extractUnsplashQuery(title);
     const image = await fetchUnsplashImage(query);
     setIsFetchingImage(false);
 
-    // 4. Add slide
     const slideData: Omit<Slide, 'id'> = {
       layout: 'bullets',
       content: { title, bullets: [] },
@@ -340,6 +391,9 @@ export default function PresentationView() {
   // ── End presentation ───────────────────────────────────────────────────────
   const endPresentation = useCallback(() => {
     stopRef.current();
+    // Flush any remaining buffer content as a final slide
+    const remaining = transcriptBufferRef.current.trim();
+    transcriptBufferRef.current = '';
     const finalPres = finalizeCurrentSlide();
     if (finalPres) saveOrUpdate(finalPres);
     setPhase('ended');
@@ -358,32 +412,58 @@ export default function PresentationView() {
 
     if (phaseRef.current !== 'speaking') return;
 
-    // End phrase check
+    // ── End phrase ──────────────────────────────────────────────────────────
     if (detectEndPhrase(text)) {
       endPresentation();
       return;
     }
 
-    // Theme shift check
+    // ── Theme shift → flush current buffer, then start new slide ───────────
     const afterShift = detectThemeShift(text);
     if (afterShift !== null) {
-      const title = extractTitleFromShift(afterShift, text);
-      startNewSlide(title);
+      const currentBuffer = transcriptBufferRef.current.trim();
+      transcriptBufferRef.current = '';
+      lastSlideTimeRef.current = Date.now();
+
+      if (currentBuffer.split(/\s+/).filter(Boolean).length >= 10) {
+        // Enough buffered content → generate a slide from it, then
+        // seed the next buffer with the post-shift context
+        generateSlideFromBuffer(currentBuffer).then(() => {
+          transcriptBufferRef.current = afterShift;
+        });
+      } else {
+        // Buffer too short for its own slide; use the legacy theme-shift handler
+        startNewSlide(extractTitleFromShift(afterShift, text));
+        transcriptBufferRef.current = afterShift;
+      }
       return;
     }
 
-    // Add bullet
+    // ── Accumulate into buffer ──────────────────────────────────────────────
     const clean = removeFiller(text.trim());
-    if (clean.length < 8) return;
-    const bullet = cleanBullet(clean);
-    if (bullet.length < 5) return;
+    if (clean.length < 5) return;
 
-    setActiveBullets(prev => {
-      const next = [...prev, bullet].slice(-6);
-      activeBulletsRef.current = next;
-      return next;
-    });
-  }, [endPresentation, startNewSlide]);
+    transcriptBufferRef.current += (transcriptBufferRef.current ? ' ' : '') + clean;
+
+    // Show the sentence as a live bullet so the user sees progress
+    const bullet = cleanBullet(clean);
+    if (bullet.length >= 5) {
+      setActiveBullets(prev => {
+        const next = [...prev, bullet].slice(-5);
+        activeBulletsRef.current = next;
+        return next;
+      });
+    }
+
+    // ── Word-count threshold → auto-generate slide ─────────────────────────
+    const wordCount = transcriptBufferRef.current.split(/\s+/).filter(Boolean).length;
+    if (wordCount >= WORD_THRESHOLD) {
+      const buffer = transcriptBufferRef.current;
+      transcriptBufferRef.current = '';
+      lastSlideTimeRef.current = Date.now();
+      generateSlideFromBuffer(buffer);
+    }
+  }, [endPresentation, startNewSlide, generateSlideFromBuffer]);
 
   const { isSupported, error: speechError, start, stop } = useSpeechRecognition(
     handleTranscript,
@@ -398,6 +478,22 @@ export default function PresentationView() {
   // Keep stopRef always current — this is what endPresentation calls
   useEffect(() => { stopRef.current = stop; }, [stop]);
 
+  // ── Time-based slide generation safety net ─────────────────────────────────
+  useEffect(() => {
+    if (phase !== 'speaking') return;
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - lastSlideTimeRef.current;
+      const buffer = transcriptBufferRef.current;
+      const wordCount = buffer.split(/\s+/).filter(Boolean).length;
+      if (elapsed >= TIME_THRESHOLD && wordCount >= MIN_WORDS_FOR_TIME && !isGeneratingRef.current) {
+        transcriptBufferRef.current = '';
+        lastSlideTimeRef.current = Date.now();
+        generateSlideFromBuffer(buffer);
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [phase, generateSlideFromBuffer]);
+
   // ── Start speaking ─────────────────────────────────────────────────────────
   const startSpeaking = useCallback(() => {
     setPermissionError(null);
@@ -409,6 +505,10 @@ export default function PresentationView() {
     if (micPermissionState === 'denied') { setPermissionError(permErrorMsg); return; }
 
     const doStart = () => {
+      // Reset buffer state at start of each speaking session
+      transcriptBufferRef.current = '';
+      lastSlideTimeRef.current = Date.now();
+      isGeneratingRef.current = false;
       start();
       setPhase('speaking');
       phaseRef.current = 'speaking';

@@ -509,7 +509,7 @@ export default function WorkspaceEditor() {
 
         {/* Present */}
         <button
-          onClick={() => navigate(`/present/${presentation.id}`)}
+          onClick={() => navigate(`/playback/${presentation.id}`)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white"
           style={{ background: 'linear-gradient(135deg, #7C3AED, #6D28D9)' }}
         >
