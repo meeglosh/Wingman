@@ -57,10 +57,10 @@ export function SlideThumbnail({ slide, theme, index, isSelected, onClick, onDel
           <SlideRenderer slide={slide} theme={theme} scale={1} />
         </div>
 
-        {/* Hover overlay */}
+        {/* Hover overlay — note: NO stopPropagation here so clicking the overlay
+            still selects the slide; individual action buttons handle their own stop */}
         <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity"
           style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
-          onClick={e => e.stopPropagation()}
         >
           {onDuplicate && (
             <button

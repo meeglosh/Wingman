@@ -387,7 +387,7 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
   );
 }
 
-// ─── Main Editor ──────────────────────────────────────��──────────────────────
+// ─── Main Editor ────────────────────────────────────────────────────────────
 export default function WorkspaceEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -401,6 +401,7 @@ export default function WorkspaceEditor() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [saved, setSaved] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -728,7 +729,7 @@ export default function WorkspaceEditor() {
                     index={i}
                     isSelected={i === selectedIdx}
                     onClick={() => setSelectedIdx(i)}
-                    onDelete={() => handleDeleteSlide(slide.id)}
+                    onDelete={() => setDeleteConfirmId(slide.id)}
                     onDuplicate={() => handleDuplicateSlide(slide)}
                   />
                   {/* Reorder buttons */}
@@ -828,6 +829,79 @@ export default function WorkspaceEditor() {
           )}
         </div>
       </div>
+
+      {/* ── Delete confirmation modal ─────────────────────────────────── */}
+      <AnimatePresence>
+        {deleteConfirmId && (() => {
+          const targetSlide = presentation.slides.find(s => s.id === deleteConfirmId);
+          return (
+            <motion.div
+              key="delete-modal-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="fixed inset-0 z-50 flex items-center justify-center"
+              style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)' }}
+              onClick={() => setDeleteConfirmId(null)}
+            >
+              <motion.div
+                key="delete-modal-card"
+                initial={{ opacity: 0, scale: 0.93, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.93, y: 8 }}
+                transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+                onClick={e => e.stopPropagation()}
+                className="rounded-2xl overflow-hidden"
+                style={{ width: 380, background: '#13141C', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
+              >
+                {/* Icon header */}
+                <div className="flex flex-col items-center pt-8 pb-4 px-6">
+                  <div
+                    className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
+                    style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)' }}
+                  >
+                    <Trash2 size={22} style={{ color: '#F87171' }} />
+                  </div>
+                  <h3 style={{ color: '#F1F5F9', fontSize: 17, fontWeight: 700, marginBottom: 6, textAlign: 'center' }}>
+                    Delete this slide?
+                  </h3>
+                  {targetSlide && (
+                    <p style={{ color: '#64748B', fontSize: 13, textAlign: 'center', lineHeight: 1.5 }}>
+                      "{targetSlide.content.title}" will be permanently removed from your presentation.
+                    </p>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-3 px-6 pb-6 pt-2">
+                  <button
+                    onClick={() => setDeleteConfirmId(null)}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.07)', color: '#94A3B8', border: '1px solid rgba(255,255,255,0.1)' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleDeleteSlide(deleteConfirmId);
+                      setDeleteConfirmId(null);
+                    }}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+                    style={{ background: 'rgba(239,68,68,0.15)', color: '#F87171', border: '1px solid rgba(239,68,68,0.3)' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.28)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.15)')}
+                  >
+                    Delete Slide
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 }
