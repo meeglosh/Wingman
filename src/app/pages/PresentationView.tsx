@@ -60,6 +60,21 @@ const THEME_SHIFT_PHRASES = [
   "the next topic", "the next section",
 ];
 
+/**
+ * If text contains a theme-shift phrase, returns the content that came AFTER
+ * the trigger phrase (to seed the new slide's title), otherwise null.
+ */
+function detectThemeShift(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const phrase of THEME_SHIFT_PHRASES) {
+    const idx = lower.indexOf(phrase);
+    if (idx >= 0) {
+      return text.slice(idx + phrase.length).replace(/^[\s,;.]+/, '').trim();
+    }
+  }
+  return null;
+}
+
 // ─── Force-next slide phrases ─────────────────────────────────────────────────
 // These trigger immediate slide generation from the current buffer, regardless
 // of word count. "next slide" / "next slide please" are the primary triggers.
