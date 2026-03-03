@@ -6,6 +6,7 @@ import { getPresentation } from '../utils/storage';
 import { getTheme } from '../utils/themes';
 import { SlideRenderer } from '../components/SlideRenderer';
 import type { Presentation, Slide } from '../types/presentation';
+import { isTypingTarget } from '../utils/keyboard';
 
 const SLIDE_W = 1280;
 const SLIDE_H = 720;
@@ -228,6 +229,8 @@ export default function PlaybackView() {
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Don't intercept when the user is typing in a text field
+      if (isTypingTarget(e)) return;
       resetHudTimer();
       switch (e.key) {
         case 'ArrowRight':

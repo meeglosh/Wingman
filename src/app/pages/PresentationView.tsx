@@ -6,6 +6,7 @@ import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
 import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI } from '../utils/slideGenerator';
 import { fetchUnsplashImage } from '../utils/unsplash';
+import { isTypingTarget } from '../utils/keyboard';
 import { LiveSlideView } from '../components/LiveSlideView';
 import {
   useAudioDevices,
@@ -599,6 +600,8 @@ export default function PresentationView() {
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Never intercept shortcuts while the user is typing in a text field
+      if (isTypingTarget(e)) return;
       if (e.key === 'Escape') {
         if (showAudioSettings) { setShowAudioSettings(false); return; }
         if (phase === 'ended') { navigate('/library'); return; }
