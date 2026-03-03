@@ -96,6 +96,47 @@ export function cleanBullet(sentence: string): string {
     .trim();
 }
 
+/**
+ * Converts a raw speech transcript chunk into a clean presentation bullet point.
+ * Returns null if the text is a fragment, filler, or meta-speech about the
+ * presentation itself (which should be silently dropped).
+ */
+export function formatBulletPoint(rawText: string): string | null {
+  // Strip leading punctuation artifacts — Whisper sometimes produces ", continuation text"
+  let s = rawText.replace(/^[\s,;.]+/, '').trim();
+
+  // Remove filler words
+  s = removeFiller(s);
+  if (!s) return null;
+
+  // Remove first-person openers that are speech artifacts, not content
+  s = s
+    .replace(/^i (think|believe|feel|guess|mean|suppose)(,? that)?\s+/i, '')
+    .replace(/^i (definitely|really|honestly|actually|just|kind of|sort of)\s+/i, '')
+    .replace(/^(so|well|alright|okay|right|yeah|yep),?\s+/i, '')
+    .replace(/^(what i (mean|want to say) is,?\s*)/i, '')
+    .trim();
+
+  // Remove trailing qualifiers that weaken the bullet
+  s = s
+    .replace(/,\s*(you know|right|i think|i guess|i mean|or something|kind of|sort of)(\.?)\s*$/i, '')
+    .replace(/[.!?,;:]+$/, '')
+    .trim();
+
+  // Too short / too few words to be a meaningful bullet
+  const wordCount = s.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 3 || s.length < 10) return null;
+
+  // Drop naked fragment starters without a real subject (e.g. "it really has")
+  if (/^(it|is|was|were|and then|but then|that is|which is)\b/i.test(s) && wordCount < 5) return null;
+
+  // Drop meta-speech about the presentation/slide itself
+  if (/\b(this slide|next slide|new slide|bullet point|the formatting|slide deck)\b/i.test(s)) return null;
+
+  // Capitalize first letter
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export function splitIntoSentences(text: string): string[] {
   return text
     .split(/(?<=[.!?])\s+|(?<=\n)/)

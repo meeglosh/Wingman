@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2, Captions, Play } from 'lucide-react';
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
-import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI } from '../utils/slideGenerator';
+import { toTitleCase, removeFiller, cleanBullet, formatBulletPoint, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI } from '../utils/slideGenerator';
 import { fetchUnsplashImage } from '../utils/unsplash';
 import { isTypingTarget } from '../utils/keyboard';
 import { LiveSlideView } from '../components/LiveSlideView';
@@ -334,6 +334,7 @@ function useWhisperSTT(
   isActive: boolean,
 ) {
   const [isListening, setIsListening] = useState(false);
+  const [ready, setReady]             = useState(false); // true once getUserMedia succeeds
   const [error, setError]             = useState<string | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => { onTranscriptRef.current = onTranscript; });
@@ -423,6 +424,7 @@ function useWhisperSTT(
         if (cancelled) { s.getTracks().forEach(t => t.stop()); return; }
         stream = s;
         setIsListening(true);
+        setReady(true);
         setError(null);
         console.log('[Whisper STT] Stream acquired, starting', CHUNK_SECS, 's chunk recording');
         recordChunk();
@@ -439,10 +441,11 @@ function useWhisperSTT(
       stream?.getTracks().forEach(t => t.stop());
       stream = null;
       setIsListening(false);
+      setReady(false);
     };
   }, [isActive]);
 
-  return { isListening, error };
+  return { isListening, ready, error };
 }
 
 // ─── Slide History Thumbnail ──────────────────────────────────────────────────
@@ -523,6 +526,9 @@ export default function PresentationView() {
   // STT mode: try Web Speech API first; auto-fall back to Whisper on network errors
   // Pre-select Whisper when embedded (iframe) since Web Speech API is always blocked there
   const [sttMode, setSttMode] = useState<'webspeech' | 'whisper'>(IS_EMBEDDED ? 'whisper' : 'webspeech');
+  // Delayed error display — only show an error to the user after 5 s of real failures
+  const [showSpeechError, setShowSpeechError] = useState(false);
+  const speakingStartRef = useRef<number>(0);
   // Voice-command feedback toast  (keyed by counter so repeated same command re-animates)
   const [cmdFeedback, setCmdFeedback] = useState<{ msg: string; id: number } | null>(null);
   const cmdFeedbackTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -640,13 +646,15 @@ export default function PresentationView() {
       const newSlide = updated.slides[updated.slides.length - 1];
       const newSlideId = newSlide.id; // capture for Phase 2 closure
 
-      // Activate the new slide right now — user sees title + bullets immediately
+      // Activate the new slide right now — user sees title + bullets immediately.
+      // Seed activeBullets with the AI-generated ones so they survive finalization.
+      const aiBullets = result.content.bullets ?? [];
       setPresentation(updated);
       presentationRef.current = updated;
       setActiveSlideId(newSlideId);
       activeSlideIdRef.current = newSlideId;
-      setActiveBullets([]);
-      activeBulletsRef.current = [];
+      setActiveBullets(aiBullets);
+      activeBulletsRef.current = aiBullets;
       setViewingSlideIdx(null);
       setIsGenerating(false);       // composing pill disappears
       isGeneratingRef.current = false; // allow next generation while image loads
@@ -896,11 +904,12 @@ export default function PresentationView() {
 
     transcriptBufferRef.current += (transcriptBufferRef.current ? ' ' : '') + clean;
 
-    // Show the sentence as a live bullet so the user sees progress
-    const bullet = cleanBullet(clean);
-    if (bullet.length >= 5) {
+    // Show the sentence as a live bullet — formatBulletPoint filters fragments
+    // and meta-speech, returning null for anything that shouldn't appear on slide
+    const bullet = formatBulletPoint(clean);
+    if (bullet && bullet.length >= 5) {
       setActiveBullets(prev => {
-        const next = [...prev, bullet].slice(-5);
+        const next = [...prev, bullet].slice(-6); // up to 6 bullets per slide
         activeBulletsRef.current = next;
         return next;
       });
@@ -937,14 +946,13 @@ export default function PresentationView() {
 
   // Whisper STT — active whenever phase is 'speaking' and we're in whisper mode
   const whisperActive = phase === 'speaking' && sttMode === 'whisper';
-  const { isListening: whisperListening, error: whisperError } = useWhisperSTT(
+  const { isListening: whisperListening, ready: whisperReady, error: whisperError } = useWhisperSTT(
     handleTranscript,
     whisperActive,
   );
 
   // Unified STT state used by the UI
   const sttListening  = sttMode === 'webspeech' ? wsListening  : whisperListening;
-  const speechError   = sttMode === 'webspeech' ? wsError      : whisperError;
   const retrySpeech   = wsRetry;   // only meaningful in webspeech mode
 
   // Keep stopRef always current — this is what endPresentation calls
@@ -964,6 +972,24 @@ export default function PresentationView() {
     }, 300);
     return () => clearTimeout(t);
   }, [isSupported, sttMode]);
+
+  // ── Track when speaking starts (for 5-s error delay) ──────────────────────
+  useEffect(() => {
+    if (phase === 'speaking') {
+      speakingStartRef.current = Date.now();
+      setShowSpeechError(false); // always reset on new session
+    }
+  }, [phase]);
+
+  // Expose speech errors only after 5 s of failures — never on first load
+  const speechError = sttMode === 'webspeech' ? wsError : whisperError;
+  useEffect(() => {
+    if (!speechError) { setShowSpeechError(false); return; }
+    const elapsed = Date.now() - speakingStartRef.current;
+    const delay   = Math.max(0, 5000 - elapsed);
+    const t = setTimeout(() => setShowSpeechError(true), delay);
+    return () => clearTimeout(t);
+  }, [speechError]);
 
   // ── Time-based slide generation safety net ─────────────────────────────────
   useEffect(() => {
@@ -1351,8 +1377,30 @@ export default function PresentationView() {
                 </span>
               </div>
 
-              {/* Right: CC + Settings + history toggle + image loading indicator */}
+              {/* Right: Whisper badge + generating pill + CC + Settings + history */}
               <div className="flex items-center gap-2">
+                {/* Whisper AI status — in the top bar, never over the slide */}
+                <AnimatePresence>
+                  {sttMode === 'whisper' && whisperReady && !showSpeechError && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.25 }}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+                      style={{ background: 'rgba(124,58,237,0.18)', border: '1px solid rgba(124,58,237,0.3)' }}
+                    >
+                      <div
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ background: '#A78BFA', animation: whisperListening ? 'pulse 1.2s ease-in-out infinite' : 'none' }}
+                      />
+                      <span style={{ color: '#A78BFA', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>
+                        Whisper AI
+                      </span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 {(isFetchingImage || isGenerating) && (
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: 'rgba(124,58,237,0.2)' }}>
                     <div className="w-3 h-3 rounded-full border-2 border-purple-400 border-t-transparent animate-spin" />
@@ -1496,9 +1544,9 @@ export default function PresentationView() {
               )}
             </AnimatePresence>
 
-            {/* STT error banner (separate from permission error) */}
+            {/* STT error banner — only shows after 5 s of confirmed failures */}
             <AnimatePresence>
-              {speechError && !permissionError && (
+              {showSpeechError && !permissionError && (
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1507,7 +1555,7 @@ export default function PresentationView() {
                   style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', maxWidth: 560 }}
                 >
                   <MicOff size={16} style={{ color: '#FCD34D', flexShrink: 0, marginTop: 2 }} />
-                  <p style={{ color: '#FCD34D', fontSize: 13, lineHeight: 1.5, flex: 1 }}>{speechError}</p>
+                  <p style={{ color: '#FCD34D', fontSize: 13, lineHeight: 1.5, flex: 1 }}>{whisperError ?? wsError}</p>
                   {/* Only show Retry in webspeech mode — Whisper retries automatically */}
                   {sttMode === 'webspeech' && (
                     <button
@@ -1545,24 +1593,7 @@ export default function PresentationView() {
               )}
             </AnimatePresence>
 
-            {/* Whisper-mode info badge — always visible while in Whisper mode, good-faith UX */}
-            {sttMode === 'whisper' && !speechError && (
-              <motion.div
-                initial={{ opacity: 0, y: -6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="absolute top-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2 rounded-xl"
-                style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.25)' }}
-              >
-                <div
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{ background: '#A78BFA', animation: whisperListening ? 'pulse 1.2s ease-in-out infinite' : 'none', opacity: whisperListening ? 1 : 0.4 }}
-                />
-                <p style={{ color: '#A78BFA', fontSize: 12, fontWeight: 600 }}>
-                  Whisper AI · transcribing every 5 s
-                </p>
-              </motion.div>
-            )}
+            {/* Whisper badge is now in the top bar — removed from here */}
           </>
         )}
       </AnimatePresence>
