@@ -176,4 +176,59 @@ Speech transcript to convert: "${transcript}"`;
   }
 });
 
+// ── Whisper Audio Transcription ──────────────────────────────────────────────
+app.post("/make-server-8474fcb9/transcribe", async (c) => {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) {
+    console.log("OPENAI_API_KEY not configured for transcribe");
+    return c.json({ error: "OPENAI_API_KEY not configured" }, 500);
+  }
+
+  let formData: FormData;
+  try {
+    formData = await c.req.formData();
+  } catch (e) {
+    console.log("Transcribe: invalid form data:", e);
+    return c.json({ error: "Invalid form data" }, 400);
+  }
+
+  const audio = formData.get("audio");
+  if (!audio || !(audio instanceof File)) {
+    return c.json({ error: "No audio file provided" }, 400);
+  }
+
+  // Skip obviously silent/empty blobs
+  if (audio.size < 1000) {
+    return c.json({ text: "" });
+  }
+
+  const whisperForm = new FormData();
+  whisperForm.append("file", audio, audio.name || "audio.webm");
+  whisperForm.append("model", "whisper-1");
+  whisperForm.append("language", "en");
+  whisperForm.append("response_format", "json");
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: whisperForm,
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.log("Whisper API error:", res.status, errText);
+      return c.json({ error: `Whisper error ${res.status}: ${errText}` }, 502);
+    }
+
+    const data = await res.json();
+    const text = (data.text ?? "").trim();
+    console.log("Whisper transcript:", text.substring(0, 120));
+    return c.json({ text });
+  } catch (e) {
+    console.log("Whisper transcription error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 Deno.serve(app.fetch);

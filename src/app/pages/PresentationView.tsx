@@ -15,6 +15,7 @@ import {
   AudioDeviceSettings,
 } from '../components/AudioVisualizer';
 import type { Presentation, Slide } from '../types/presentation';
+import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 
 type PresentationPhase = 'loading' | 'intro' | 'speaking' | 'ended';
 
@@ -282,6 +283,132 @@ function useSpeechRecognition(
   return { isSupported, isListening, error, start, stop, retry };
 }
 
+// ─── Whisper STT Hook (fallback for environments where Web Speech API is blocked) ──
+// Silently swallowed whisper hallucinations / silence artefacts to drop
+const WHISPER_NOISE = new Set([
+  '', 'you', 'thank you', 'thank you.', 'thanks.', 'thanks', '.', '...', '….', '…',
+  '[blank_audio]', '(silence)', '[silence]', '[music]', '(music)', '[applause]',
+  'subtitles by the amara.org community', 'www.mooji.org',
+]);
+
+function isWhisperNoise(text: string): boolean {
+  const t = text.toLowerCase().trim().replace(/[.!?,]+$/, '').trim();
+  if (t.length < 2) return true;
+  if (WHISPER_NOISE.has(t)) return true;
+  // Hallucinated single-word filler
+  if (t.split(/\s+/).length === 1 && ['um', 'uh', 'hmm', 'mm', 'ah', 'oh', 'okay', 'ok'].includes(t)) return true;
+  return false;
+}
+
+function useWhisperSTT(
+  onTranscript: (text: string, isFinal: boolean) => void,
+  isActive: boolean,
+) {
+  const [isListening, setIsListening] = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const onTranscriptRef = useRef(onTranscript);
+  useEffect(() => { onTranscriptRef.current = onTranscript; });
+
+  useEffect(() => {
+    if (!isActive) {
+      setIsListening(false);
+      return;
+    }
+
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+    let recorder: MediaRecorder | null = null;
+    // Detect best supported mime type for Whisper
+    const mimeType =
+      MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
+      MediaRecorder.isTypeSupported('audio/webm')             ? 'audio/webm' :
+      MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')  ? 'audio/ogg;codecs=opus'  :
+      '';
+    const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+
+    // Record CHUNK_SECS of audio, transcribe it, repeat
+    const CHUNK_SECS = 5;
+
+    const recordChunk = () => {
+      if (cancelled || !stream) return;
+
+      const chunks: Blob[] = [];
+      try {
+        recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+      recorder.onstop = async () => {
+        if (cancelled) return;
+        const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+
+        if (blob.size > 1500) {
+          try {
+            const fd = new FormData();
+            fd.append('audio', blob, `audio.${ext}`);
+            const res = await fetch(
+              `https://${projectId}.supabase.co/functions/v1/make-server-8474fcb9/transcribe`,
+              { method: 'POST', headers: { Authorization: `Bearer ${publicAnonKey}` }, body: fd },
+            );
+            if (res.ok) {
+              const { text } = await res.json();
+              if (text && !isWhisperNoise(text)) {
+                console.log('[Whisper STT] Transcript:', text);
+                onTranscriptRef.current(text.trim(), true);
+              }
+            } else {
+              const err = await res.text();
+              console.warn('[Whisper STT] Server error:', err);
+              if (!cancelled) setError(`Whisper error: ${res.status}`);
+            }
+          } catch (fetchErr) {
+            console.warn('[Whisper STT] Fetch error:', fetchErr);
+          }
+        } else {
+          console.log('[Whisper STT] Chunk too small (silence?), skipping');
+        }
+
+        // Queue next chunk
+        if (!cancelled) setTimeout(recordChunk, 100);
+      };
+
+      recorder.start();
+      // Stop after CHUNK_SECS to trigger onstop → transcribe
+      setTimeout(() => {
+        if (!cancelled && recorder?.state === 'recording') recorder.stop();
+      }, CHUNK_SECS * 1000);
+    };
+
+    navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+      .then(s => {
+        if (cancelled) { s.getTracks().forEach(t => t.stop()); return; }
+        stream = s;
+        setIsListening(true);
+        setError(null);
+        console.log('[Whisper STT] Stream acquired, starting', CHUNK_SECS, 's chunk recording');
+        recordChunk();
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('[Whisper STT] getUserMedia error:', err);
+        setError('Microphone access denied: ' + err.message);
+      });
+
+    return () => {
+      cancelled = true;
+      try { recorder?.state === 'recording' && recorder.stop(); } catch {}
+      stream?.getTracks().forEach(t => t.stop());
+      stream = null;
+      setIsListening(false);
+    };
+  }, [isActive]);
+
+  return { isListening, error };
+}
+
 // ─── Slide History Thumbnail ──────────────────────────────────────────────────
 function SlideThumbnail({
   slide,
@@ -357,6 +484,9 @@ export default function PresentationView() {
   );
   // CC: off by default; persisted per presentation ID
   const [showCC, setShowCC] = useState(false);
+  // STT mode: try Web Speech API first; auto-fall back to Whisper on network errors
+  // Pre-select Whisper when embedded (iframe) since Web Speech API is always blocked there
+  const [sttMode, setSttMode] = useState<'webspeech' | 'whisper'>(IS_EMBEDDED ? 'whisper' : 'webspeech');
 
   // ── Refs to avoid stale closures ────────────────────────────────────────────
   const presentationRef = useRef<Presentation | null>(null);
@@ -666,20 +796,54 @@ export default function PresentationView() {
     }
   }, [endPresentation, startNewSlide, generateSlideFromBuffer]);
 
-  const { isSupported, isListening: sttListening, error: speechError, start, stop, retry: retrySpeech } = useSpeechRecognition(
+  const { isSupported, isListening: wsListening, error: wsError, start: wsStart, stop: wsStop, retry: wsRetry } = useSpeechRecognition(
     handleTranscript,
     (reason: string) => {
-      // Fatal STT error — surface it as a permission/speech error banner
-      setPermissionError(
-        IS_EMBEDDED
-          ? 'Microphone is blocked in preview mode. Open this app in a new tab to use it.'
-          : reason,
-      );
+      // Network / audio-capture errors → silently fall back to Whisper instead of showing an error
+      const isNetworkLike = /network|audio.capture/i.test(reason);
+      if (isNetworkLike) {
+        console.log('[Wingman] Web Speech API network error — switching to Whisper STT');
+        setSttMode('whisper');
+        // Web Speech API has already stopped retrying (shouldRestartRef = false in the hook)
+      } else {
+        setPermissionError(
+          IS_EMBEDDED
+            ? 'Microphone is blocked in preview mode. Open this app in a new tab to use it.'
+            : reason,
+        );
+      }
     },
   );
 
+  // Whisper STT — active whenever phase is 'speaking' and we're in whisper mode
+  const whisperActive = phase === 'speaking' && sttMode === 'whisper';
+  const { isListening: whisperListening, error: whisperError } = useWhisperSTT(
+    handleTranscript,
+    whisperActive,
+  );
+
+  // Unified STT state used by the UI
+  const sttListening  = sttMode === 'webspeech' ? wsListening  : whisperListening;
+  const speechError   = sttMode === 'webspeech' ? wsError      : whisperError;
+  const retrySpeech   = wsRetry;   // only meaningful in webspeech mode
+
   // Keep stopRef always current — this is what endPresentation calls
-  useEffect(() => { stopRef.current = stop; }, [stop]);
+  // In whisper mode wsStop is a no-op (Whisper deactivates via whisperActive going false)
+  useEffect(() => { stopRef.current = wsStop; }, [wsStop]);
+
+  // Auto-fallback: if the Web Speech API turns out to be unavailable in this browser,
+  // silently switch to Whisper. We wait 300 ms so the useSpeechRecognition effect can
+  // set isSupported = true first if the API IS available.
+  useEffect(() => {
+    if (isSupported || sttMode !== 'webspeech') return;
+    const t = setTimeout(() => {
+      if (!isSupported) {
+        console.log('[Wingman] Web Speech API not available — switching to Whisper STT');
+        setSttMode('whisper');
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [isSupported, sttMode]);
 
   // ── Time-based slide generation safety net ─────────────────────────────────
   useEffect(() => {
@@ -712,7 +876,9 @@ export default function PresentationView() {
       transcriptBufferRef.current = '';
       lastSlideTimeRef.current = Date.now();
       isGeneratingRef.current = false;
-      start();
+      // Only start Web Speech API when in webspeech mode
+      // (Whisper activates automatically via whisperActive once phase = 'speaking')
+      if (sttMode === 'webspeech') wsStart();
       setPhase('speaking');
       phaseRef.current = 'speaking';
     };
@@ -727,7 +893,7 @@ export default function PresentationView() {
         doStart();
       })
       .catch(() => { setPermissionPending(false); setPermissionError(permErrorMsg); });
-  }, [micPermissionState, start]);
+  }, [micPermissionState, wsStart, sttMode]);
 
   // ── Load presentation + generate intro slide ───────────────────────────────
   useEffect(() => {
@@ -1136,7 +1302,9 @@ export default function PresentationView() {
                   }}
                 />
                 <span style={{ color: sttListening ? '#A78BFA' : '#FCD34D', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em' }}>
-                  {sttListening ? 'LIVE' : 'WAITING'}
+                  {sttListening
+                    ? (sttMode === 'whisper' ? 'WHISPER' : 'LIVE')
+                    : 'WAITING'}
                 </span>
               </div>
 
@@ -1150,7 +1318,7 @@ export default function PresentationView() {
                 )}
                 {!liveTranscript && sttListening && (
                   <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13 }}>
-                    Listening
+                    {sttMode === 'whisper' ? 'Recording chunk' : 'Listening'}
                     <span className="inline-flex gap-px ml-0.5">
                       {[0, 1, 2].map(i => (
                         <span key={i} style={{ animation: `pulse ${0.9 + i * 0.15}s ease-in-out ${i * 0.15}s infinite` }}>.</span>
@@ -1220,28 +1388,31 @@ export default function PresentationView() {
                 >
                   <MicOff size={16} style={{ color: '#FCD34D', flexShrink: 0, marginTop: 2 }} />
                   <p style={{ color: '#FCD34D', fontSize: 13, lineHeight: 1.5, flex: 1 }}>{speechError}</p>
-                  <button
-                    onClick={retrySpeech}
-                    className="flex-shrink-0 px-3 py-1 rounded-lg text-xs font-semibold transition-colors"
-                    style={{ background: 'rgba(234,179,8,0.2)', color: '#FCD34D', border: '1px solid rgba(234,179,8,0.35)' }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(234,179,8,0.35)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(234,179,8,0.2)')}
-                  >
-                    Retry
-                  </button>
+                  {/* Only show Retry in webspeech mode — Whisper retries automatically */}
+                  {sttMode === 'webspeech' && (
+                    <button
+                      onClick={retrySpeech}
+                      className="flex-shrink-0 px-3 py-1 rounded-lg text-xs font-semibold transition-colors"
+                      style={{ background: 'rgba(234,179,8,0.2)', color: '#FCD34D', border: '1px solid rgba(234,179,8,0.35)' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(234,179,8,0.35)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'rgba(234,179,8,0.2)')}
+                    >
+                      Retry
+                    </button>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* "Speech API not supported" warning during speaking */}
-            {!isSupported && (
+            {/* Whisper-mode info badge — only visible briefly on switch */}
+            {sttMode === 'whisper' && sttListening && !speechError && (
               <div
-                className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl"
-                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', maxWidth: 500 }}
+                className="absolute top-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2 rounded-xl"
+                style={{ background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.25)' }}
               >
-                <MicOff size={16} style={{ color: '#F87171' }} />
-                <p style={{ color: '#F87171', fontSize: 13 }}>
-                  Speech recognition is not supported in this browser. Please use Chrome or Edge.
+                <div className="w-1.5 h-1.5 rounded-full bg-purple-400" style={{ animation: 'pulse 1.2s ease-in-out infinite' }} />
+                <p style={{ color: '#A78BFA', fontSize: 12, fontWeight: 600 }}>
+                  Whisper AI · transcribing every 5 s
                 </p>
               </div>
             )}
