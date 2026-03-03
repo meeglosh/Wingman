@@ -8,7 +8,7 @@ import {
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
 import { getTheme, SLIDE_THEMES } from '../utils/themes';
-import { exportToPPTX, exportForKeynote, exportForGoogleSlides } from '../utils/exportUtils';
+import { exportToPPTX } from '../utils/exportUtils';
 import { SlideThumbnail } from '../components/SlideThumbnail';
 import { ScaledSlide } from '../components/SlideRenderer';
 import type { Presentation, Slide, SlideLayout, SlideTheme } from '../types/presentation';
@@ -315,47 +315,79 @@ function PropertiesPanel({ slide, theme, onChange }: {
 
 // ─── Export Menu ──────────────────────────────────────────────────────────────
 function ExportDropdown({ presentation, onClose }: { presentation: Presentation; onClose: () => void }) {
-  const [exporting, setExporting] = useState<string | null>(null);
-  const doExport = async (type: string) => {
-    setExporting(type);
-    try {
-      if (type === 'pptx') await exportToPPTX(presentation);
-      else if (type === 'keynote') await exportForKeynote(presentation);
-      else if (type === 'google') await exportForGoogleSlides(presentation);
-    } catch {}
-    setExporting(null);
+  const [downloading, setDownloading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try { await exportToPPTX(presentation); } catch {}
+    setDownloading(false);
     onClose();
   };
+
+  const handleCopyLink = async () => {
+    const url = `${window.location.origin}/playback/${presentation.id}`;
+    try { await navigator.clipboard.writeText(url); } catch {}
+    setCopied(true);
+    setTimeout(() => { setCopied(false); onClose(); }, 1400);
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -8, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -8, scale: 0.95 }}
-      className="absolute right-0 top-10 rounded-xl overflow-hidden z-50 w-56"
-      style={{ background: '#1A1B25', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}
+      className="absolute right-0 top-10 rounded-xl overflow-hidden z-50"
+      style={{ width: 224, background: '#1A1B25', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}
     >
-      {[
-        { id: 'pptx', label: 'PowerPoint (.pptx)', icon: '📊' },
-        { id: 'keynote', label: 'Keynote (.pptx)', icon: '🍎' },
-        { id: 'google', label: 'Google Slides (.pptx)', icon: '🎨' },
-      ].map(opt => (
-        <button
-          key={opt.id}
-          onClick={() => doExport(opt.id)}
-          disabled={!!exporting}
-          className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5"
-          style={{ color: '#E2E8F0', opacity: exporting && exporting !== opt.id ? 0.4 : 1 }}
-        >
-          <span>{opt.icon}</span>
-          {opt.label}
-          {exporting === opt.id && <div className="ml-auto w-3 h-3 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />}
-        </button>
-      ))}
+      <div className="px-4 py-2.5 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+        <span style={{ color: '#64748B', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Export
+        </span>
+      </div>
+
+      {/* Download .pptx */}
+      <button
+        onClick={handleDownload}
+        disabled={downloading}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5"
+        style={{ color: '#E2E8F0', opacity: downloading ? 0.6 : 1 }}
+      >
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(124,58,237,0.15)' }}>
+          {downloading
+            ? <div className="w-3.5 h-3.5 rounded-full border-2 border-purple-400 border-t-transparent animate-spin" />
+            : <Download size={14} style={{ color: '#A78BFA' }} />
+          }
+        </div>
+        <div>
+          <p className="font-medium" style={{ fontSize: 13 }}>Download file</p>
+          <p style={{ color: '#64748B', fontSize: 11 }}>PowerPoint (.pptx)</p>
+        </div>
+      </button>
+
+      {/* Copy shareable link */}
+      <button
+        onClick={handleCopyLink}
+        disabled={copied}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5"
+        style={{ color: '#E2E8F0' }}
+      >
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: copied ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)' }}>
+          {copied
+            ? <Check size={14} style={{ color: '#34D399' }} />
+            : <Copy size={14} style={{ color: '#94A3B8' }} />
+          }
+        </div>
+        <div>
+          <p className="font-medium" style={{ fontSize: 13 }}>{copied ? 'Link copied!' : 'Copy share link'}</p>
+          <p style={{ color: '#64748B', fontSize: 11 }}>{copied ? 'Anyone with the link can view' : 'Shareable playback link'}</p>
+        </div>
+      </button>
     </motion.div>
   );
 }
 
-// ─── Main Editor ─────────────────────────────────────────────────────────────
+// ─── Main Editor ──────────────────────────────────────��──────────────────────
 export default function WorkspaceEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
