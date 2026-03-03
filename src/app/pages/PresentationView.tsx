@@ -1,0 +1,911 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router';
+import { motion, AnimatePresence } from 'motion/react';
+import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
+import { getPresentation } from '../utils/storage';
+import { usePresentations } from '../context/PresentationContext';
+import { toTitleCase, removeFiller, cleanBullet, extractUnsplashQuery } from '../utils/slideGenerator';
+import { fetchUnsplashImage } from '../utils/unsplash';
+import { LiveSlideView } from '../components/LiveSlideView';
+import {
+  useAudioDevices,
+  useAudioAnalyser,
+  WaveformVisualizer,
+  AudioDeviceSettings,
+} from '../components/AudioVisualizer';
+import type { Presentation, Slide } from '../types/presentation';
+
+type PresentationPhase = 'loading' | 'intro' | 'speaking' | 'ended';
+
+const DEVICE_STORAGE_KEY = 'wingman-audio-device';
+
+const IS_EMBEDDED = (() => {
+  try { return window.self !== window.top; } catch { return true; }
+})();
+
+// ─── End-of-presentation phrase detection ────────────────────────────────────
+const END_PHRASES = [
+  "thank you for attending", "thank you for your time", "thank you for listening",
+  "thank you for being here", "thank you all", "thanks everyone", "thanks for attending",
+  "that's the end", "that is the end", "this is the end",
+  "that concludes", "this concludes",
+  "in conclusion,", "in closing,",
+  "to wrap up", "to summarize,", "in summary,",
+  "that's a wrap", "that's all from me", "that's all i have",
+  "end of my presentation", "end of the presentation", "end of our presentation",
+  "i hope you enjoyed", "thank you for coming",
+];
+
+function detectEndPhrase(text: string): boolean {
+  const lower = text.toLowerCase();
+  return END_PHRASES.some(phrase => lower.includes(phrase));
+}
+
+// ─── Theme-shift phrase detection ────────────────────────────────────────────
+const THEME_SHIFT_PHRASES = [
+  "now let's talk about", "now let's look at", "now let's move to", "now let's discuss",
+  "moving on to", "moving on,",
+  "next up,", "next,", "next slide",
+  "turning now to", "turning to",
+  "let's move on to", "let's now look at", "let's now talk about",
+  "let's discuss", "let's explore",
+  "i want to talk about", "i'd like to talk about", "i'd like to move on to",
+  "i now want to", "i also want to",
+  "on a different note,", "on another note,",
+  "that brings me to", "which brings me to",
+  "speaking of", "this leads me to",
+  "another key point", "another important point",
+  "another topic", "another area",
+  "the next topic", "the next section",
+];
+
+function detectThemeShift(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const phrase of THEME_SHIFT_PHRASES) {
+    const idx = lower.indexOf(phrase);
+    if (idx >= 0) {
+      const after = text.slice(idx + phrase.length).trim();
+      return after || text;
+    }
+  }
+  return null;
+}
+
+function extractTitleFromShift(afterPhrase: string, fullText: string): string {
+  const source = afterPhrase || fullText;
+  const clean = source
+    .replace(/[.!?]+$/, '')
+    .replace(/^(is |are |the |a |an )/i, '')
+    .trim()
+    .slice(0, 80);
+  return toTitleCase(clean) || 'New Section';
+}
+
+// ─── Speech Recognition Hook ─────────────────────────────────────────────────
+function useSpeechRecognition(
+  onTranscript: (text: string, isFinal: boolean) => void,
+  onFatalError?: () => void,
+) {
+  const recognitionRef = useRef<any>(null);
+  const [isSupported, setIsSupported] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shouldRestartRef = useRef(false);
+  const onTranscriptRef = useRef(onTranscript);
+  useEffect(() => { onTranscriptRef.current = onTranscript; });
+
+  useEffect(() => {
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) return;
+    setIsSupported(true);
+    const rec = new SpeechRec();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+    rec.maxAlternatives = 1;
+
+    rec.onresult = (event: any) => {
+      let interim = '';
+      let final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += t;
+        else interim += t;
+      }
+      if (final) onTranscriptRef.current(final, true);
+      else if (interim) onTranscriptRef.current(interim, false);
+    };
+
+    rec.onerror = (e: any) => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      console.error('Speech recognition error:', e.error);
+      if (e.error === 'not-allowed') {
+        shouldRestartRef.current = false;
+        setError('Microphone access was denied. Click the 🔒 in your browser address bar, allow the microphone, then try again.');
+        onFatalError?.();
+        return;
+      }
+      setError(`Speech error: ${e.error}`);
+    };
+
+    rec.onend = () => {
+      setIsListening(false);
+      if (shouldRestartRef.current) {
+        const t = setTimeout(() => {
+          if (!shouldRestartRef.current) return;
+          try { rec.start(); setIsListening(true); } catch (err) { console.warn('Restart failed:', err); }
+        }, 150);
+        return () => clearTimeout(t);
+      }
+    };
+
+    recognitionRef.current = rec;
+    return () => { shouldRestartRef.current = false; try { rec.abort(); } catch {} };
+  }, []);
+
+  const start = useCallback(() => {
+    if (!recognitionRef.current) return;
+    setError(null);
+    shouldRestartRef.current = true;
+    try { recognitionRef.current.start(); setIsListening(true); }
+    catch (e) { console.warn('Speech start (may already be running):', e); }
+  }, []);
+
+  const stop = useCallback(() => {
+    shouldRestartRef.current = false;
+    setIsListening(false);
+    try { recognitionRef.current?.stop(); } catch {}
+  }, []);
+
+  return { isSupported, isListening, error, start, stop };
+}
+
+// ─── Slide History Thumbnail ──────────────────────────────────────────────────
+function SlideThumbnail({
+  slide,
+  index,
+  isActive,
+  onClick,
+}: {
+  slide: Slide;
+  index: number;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full rounded-xl overflow-hidden transition-all text-left"
+      style={{
+        border: isActive ? '2px solid #7C3AED' : '2px solid rgba(255,255,255,0.08)',
+        boxShadow: isActive ? '0 0 0 3px rgba(124,58,237,0.2)' : 'none',
+        marginBottom: 8,
+      }}
+    >
+      <div
+        style={{
+          height: 90,
+          overflow: 'hidden',
+          position: 'relative',
+          background: slide.backgroundImageUrl ? 'transparent' : '#1A1B25',
+        }}
+      >
+        {slide.backgroundImageUrl ? (
+          <img src={slide.backgroundImageUrl} alt={slide.content.title} className="w-full h-full object-cover" style={{ filter: 'brightness(0.6)' }} />
+        ) : (
+          <div style={{ width: '100%', height: '100%', background: 'linear-gradient(135deg, #1A1040, #0D0B1E)' }} />
+        )}
+        <div className="absolute inset-0 flex flex-col justify-end p-2" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 60%)' }}>
+          <p style={{ color: 'white', fontSize: 9, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>
+            {slide.content.title}
+          </p>
+        </div>
+        <div className="absolute top-1.5 left-1.5">
+          <span style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.7)', fontSize: 8, padding: '1px 5px', borderRadius: 3 }}>
+            {index + 1}
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+export default function PresentationView() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { addSlide, updateSlide, saveOrUpdate } = usePresentations();
+
+  // ── Core state ──────────────────────────────────────────────────────────────
+  const [phase, setPhase] = useState<PresentationPhase>('loading');
+  const [presentation, setPresentation] = useState<Presentation | null>(null);
+  const [activeSlideId, setActiveSlideId] = useState<string | null>(null);
+  const [activeBullets, setActiveBullets] = useState<string[]>([]);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [isFetchingImage, setIsFetchingImage] = useState(false);
+  const [viewingSlideIdx, setViewingSlideIdx] = useState<number | null>(null); // for history panel review
+  const [showHistory, setShowHistory] = useState(false);
+  const [showAudioSettings, setShowAudioSettings] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [permissionPending, setPermissionPending] = useState(false);
+  const [micPermissionState, setMicPermissionState] = useState<PermissionState | 'unknown'>('unknown');
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
+    () => localStorage.getItem(DEVICE_STORAGE_KEY) ?? '',
+  );
+
+  // ── Refs to avoid stale closures ────────────────────────────────────────────
+  const presentationRef = useRef<Presentation | null>(null);
+  const activeSlideIdRef = useRef<string | null>(null);
+  const activeBulletsRef = useRef<string[]>([]);
+  const phaseRef = useRef<PresentationPhase>('loading');
+  // stopRef breaks the circular dep: endPresentation → stop → useSpeechRecognition → handleTranscript → endPresentation
+  const stopRef = useRef<() => void>(() => {});
+
+  const syncState = (p: Presentation | null, slideId: string | null, bullets: string[], ph: PresentationPhase) => {
+    presentationRef.current = p;
+    activeSlideIdRef.current = slideId;
+    activeBulletsRef.current = bullets;
+    phaseRef.current = ph;
+  };
+
+  useEffect(() => { presentationRef.current = presentation; }, [presentation]);
+  useEffect(() => { activeSlideIdRef.current = activeSlideId; }, [activeSlideId]);
+  useEffect(() => { activeBulletsRef.current = activeBullets; }, [activeBullets]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+
+  // ── Derived ─────────────────────────────────────────────────────────────────
+  const activeSlide = presentation?.slides.find(s => s.id === activeSlideId) ?? null;
+  const displayedSlide = viewingSlideIdx !== null
+    ? presentation?.slides[viewingSlideIdx] ?? activeSlide
+    : activeSlide;
+
+  // ── Audio / mic ─────────────────────────────────────────────────────────────
+  const { devices } = useAudioDevices();
+  const { bars } = useAudioAnalyser(
+    phase === 'speaking' && micPermissionState === 'granted',
+    selectedDeviceId || undefined,
+  );
+
+  useEffect(() => {
+    if (selectedDeviceId) localStorage.setItem(DEVICE_STORAGE_KEY, selectedDeviceId);
+  }, [selectedDeviceId]);
+
+  // Probe mic permission
+  useEffect(() => {
+    if (!navigator.permissions?.query) return;
+    let status: PermissionStatus | null = null;
+    const onChange = () => { if (status) setMicPermissionState(status.state); };
+    navigator.permissions
+      .query({ name: 'microphone' as PermissionName })
+      .then(s => { status = s; setMicPermissionState(s.state); s.addEventListener('change', onChange); })
+      .catch(() => setMicPermissionState('unknown'));
+    return () => { status?.removeEventListener('change', onChange); };
+  }, []);
+
+  // ── Finalize current slide (save bullets to storage) ───────────────────────
+  const finalizeCurrentSlide = useCallback(() => {
+    const pres = presentationRef.current;
+    const slideId = activeSlideIdRef.current;
+    const bullets = activeBulletsRef.current;
+    if (!pres || !slideId) return pres;
+    const slide = pres.slides.find(s => s.id === slideId);
+    if (!slide) return pres;
+    const updated = updateSlide(pres, {
+      ...slide,
+      content: { ...slide.content, bullets: bullets.filter(b => b.length > 0) },
+    });
+    presentationRef.current = updated;
+    setPresentation(updated);
+    return updated;
+  }, [updateSlide]);
+
+  // ── Add a new slide (theme shift) ─────────────────────────────────────────
+  const startNewSlide = useCallback(async (themeContext: string) => {
+    // 1. Finalize current
+    const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
+    if (!savedPres) return;
+
+    // 2. Build title
+    const title = extractTitleFromShift(themeContext, themeContext);
+
+    // 3. Fetch image
+    setIsFetchingImage(true);
+    const query = extractUnsplashQuery(title);
+    const image = await fetchUnsplashImage(query);
+    setIsFetchingImage(false);
+
+    // 4. Add slide
+    const slideData: Omit<Slide, 'id'> = {
+      layout: 'bullets',
+      content: { title, bullets: [] },
+      backgroundImageUrl: image?.url,
+      backgroundImageAlt: image?.alt,
+      unsplashCredit: image?.credit,
+      transcript: '',
+      generatedAt: Date.now(),
+    };
+
+    const updated = addSlide(savedPres, slideData);
+    const newSlide = updated.slides[updated.slides.length - 1];
+
+    setPresentation(updated);
+    presentationRef.current = updated;
+    setActiveSlideId(newSlide.id);
+    activeSlideIdRef.current = newSlide.id;
+    setActiveBullets([]);
+    activeBulletsRef.current = [];
+    setViewingSlideIdx(null);
+  }, [finalizeCurrentSlide, addSlide]);
+
+  // ── End presentation ───────────────────────────────────────────────────────
+  const endPresentation = useCallback(() => {
+    stopRef.current();
+    const finalPres = finalizeCurrentSlide();
+    if (finalPres) saveOrUpdate(finalPres);
+    setPhase('ended');
+    phaseRef.current = 'ended';
+    setLiveTranscript('');
+  }, [finalizeCurrentSlide, saveOrUpdate]);
+
+  // ── Speech transcript handler ───────────────────────────────────────────────
+  const handleTranscript = useCallback((text: string, isFinal: boolean) => {
+    if (!isFinal) {
+      setLiveTranscript(text);
+      return;
+    }
+
+    setLiveTranscript('');
+
+    if (phaseRef.current !== 'speaking') return;
+
+    // End phrase check
+    if (detectEndPhrase(text)) {
+      endPresentation();
+      return;
+    }
+
+    // Theme shift check
+    const afterShift = detectThemeShift(text);
+    if (afterShift !== null) {
+      const title = extractTitleFromShift(afterShift, text);
+      startNewSlide(title);
+      return;
+    }
+
+    // Add bullet
+    const clean = removeFiller(text.trim());
+    if (clean.length < 8) return;
+    const bullet = cleanBullet(clean);
+    if (bullet.length < 5) return;
+
+    setActiveBullets(prev => {
+      const next = [...prev, bullet].slice(-6);
+      activeBulletsRef.current = next;
+      return next;
+    });
+  }, [endPresentation, startNewSlide]);
+
+  const { isSupported, error: speechError, start, stop } = useSpeechRecognition(
+    handleTranscript,
+    () => {
+      setPhase(prev => prev === 'speaking' ? 'speaking' : prev); // keep phase, just show error
+      setPermissionError(IS_EMBEDDED
+        ? 'Microphone is blocked in preview mode. Open this app in a new tab to use it.'
+        : "Microphone access denied.");
+    },
+  );
+
+  // Keep stopRef always current — this is what endPresentation calls
+  useEffect(() => { stopRef.current = stop; }, [stop]);
+
+  // ── Start speaking ─────────────────────────────────────────────────────────
+  const startSpeaking = useCallback(() => {
+    setPermissionError(null);
+
+    const permErrorMsg = IS_EMBEDDED
+      ? 'Microphone is blocked in preview mode. Open this app in a new tab.'
+      : "Microphone access denied. Click 🔒 in your browser's address bar and allow the microphone.";
+
+    if (micPermissionState === 'denied') { setPermissionError(permErrorMsg); return; }
+
+    const doStart = () => {
+      start();
+      setPhase('speaking');
+      phaseRef.current = 'speaking';
+    };
+
+    if (micPermissionState === 'granted') { doStart(); return; }
+
+    setPermissionPending(true);
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        stream.getTracks().forEach(t => t.stop());
+        setPermissionPending(false);
+        doStart();
+      })
+      .catch(() => { setPermissionPending(false); setPermissionError(permErrorMsg); });
+  }, [micPermissionState, start]);
+
+  // ── Load presentation + generate intro slide ───────────────────────────────
+  useEffect(() => {
+    if (!id) return;
+    const p = getPresentation(id);
+    if (!p) { navigate('/'); return; }
+
+    if (p.slides.length > 0) {
+      // Existing presentation — show ended/review state
+      setPresentation(p);
+      presentationRef.current = p;
+      const lastSlide = p.slides[p.slides.length - 1];
+      setActiveSlideId(lastSlide.id);
+      activeSlideIdRef.current = lastSlide.id;
+      setActiveBullets(lastSlide.content.bullets ?? []);
+      activeBulletsRef.current = lastSlide.content.bullets ?? [];
+      setPhase('ended');
+      phaseRef.current = 'ended';
+      return;
+    }
+
+    // New presentation — fetch image + create intro slide
+    (async () => {
+      setIsFetchingImage(true);
+      const query = extractUnsplashQuery(p.title);
+      const image = await fetchUnsplashImage(query);
+      setIsFetchingImage(false);
+
+      const slideData: Omit<Slide, 'id'> = {
+        layout: 'title',
+        content: { title: p.title, subtitle: '' },
+        backgroundImageUrl: image?.url,
+        backgroundImageAlt: image?.alt,
+        unsplashCredit: image?.credit,
+        transcript: '',
+        generatedAt: Date.now(),
+      };
+
+      const updated = addSlide(p, slideData);
+      const introSlide = updated.slides[0];
+
+      setPresentation(updated);
+      presentationRef.current = updated;
+      setActiveSlideId(introSlide.id);
+      activeSlideIdRef.current = introSlide.id;
+      setPhase('intro');
+      phaseRef.current = 'intro';
+    })();
+  }, [id]);
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showAudioSettings) { setShowAudioSettings(false); return; }
+        if (phase === 'ended') { navigate('/library'); return; }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [phase, showAudioSettings, navigate]);
+
+  // ── Loading ────────────────────────────────────────────────────────────────
+  if (phase === 'loading' || !presentation) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: '#08090E' }}>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 rounded-full border-2 border-purple-500 border-t-transparent animate-spin" />
+          <p style={{ color: '#64748B', fontSize: 14, fontFamily: '"Space Grotesk", system-ui, sans-serif' }}>
+            {isFetchingImage ? 'Finding the perfect backdrop…' : 'Loading…'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const slideCount = presentation.slides.length;
+  const displayCredit = displayedSlide?.unsplashCredit;
+
+  return (
+    <div
+      className="fixed inset-0 overflow-hidden"
+      style={{ background: '#000', fontFamily: '"Space Grotesk", "Inter", system-ui, sans-serif' }}
+    >
+      {/* ── Full-screen live slide ─────────────────────────────────── */}
+      <LiveSlideView
+        backgroundImageUrl={displayedSlide?.backgroundImageUrl}
+        backgroundImageAlt={displayedSlide?.backgroundImageAlt}
+        title={displayedSlide?.content.title ?? ''}
+        bullets={viewingSlideIdx !== null
+          ? (displayedSlide?.content.bullets ?? [])
+          : activeBullets}
+        liveBullet={phase === 'speaking' && viewingSlideIdx === null ? liveTranscript : undefined}
+        isLoading={isFetchingImage}
+        credit={displayCredit}
+      />
+
+      {/* ── INTRO overlay ─────────────────────────────────────────── */}
+      <AnimatePresence>
+        {phase === 'intro' && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(2px)' }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 32, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -16, scale: 0.97 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              className="text-center"
+              style={{
+                background: 'rgba(8,9,14,0.85)',
+                backdropFilter: 'blur(24px)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 24,
+                padding: '52px 60px',
+                maxWidth: 480,
+                width: '90vw',
+                boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(124,58,237,0.15)',
+              }}
+            >
+              {/* Mic icon */}
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
+                style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.3), rgba(99,102,241,0.15))', border: '1px solid rgba(124,58,237,0.4)' }}
+              >
+                <Mic size={28} style={{ color: '#A78BFA' }} />
+              </div>
+
+              <h2 className="text-white mb-2" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>
+                Your first slide is ready
+              </h2>
+              <p style={{ color: '#64748B', fontSize: 15, lineHeight: 1.6, marginBottom: 32 }}>
+                When you're ready to start, hit the button below and speak naturally. Wingman will build your slides as you talk.
+              </p>
+
+              {permissionError && (
+                <div className="mb-5 px-4 py-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                  <p style={{ color: '#F87171', fontSize: 13, lineHeight: 1.5 }}>{permissionError}</p>
+                </div>
+              )}
+
+              <motion.button
+                onClick={startSpeaking}
+                disabled={permissionPending}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl text-base font-semibold text-white mb-4"
+                style={{
+                  background: 'linear-gradient(135deg, #7C3AED, #6D28D9)',
+                  boxShadow: '0 8px 32px rgba(124,58,237,0.4)',
+                  cursor: permissionPending ? 'wait' : 'pointer',
+                  opacity: permissionPending ? 0.7 : 1,
+                }}
+              >
+                {permissionPending ? (
+                  <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                ) : (
+                  <Mic size={20} />
+                )}
+                {permissionPending ? 'Requesting microphone…' : 'Start Speaking'}
+              </motion.button>
+
+              <button
+                onClick={() => navigate('/')}
+                className="text-sm transition-colors"
+                style={{ color: '#475569' }}
+                onMouseEnter={e => (e.currentTarget.style.color = '#94A3B8')}
+                onMouseLeave={e => (e.currentTarget.style.color = '#475569')}
+              >
+                ← Back to home
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── ENDED overlay ─────────────────────────────────────────── */}
+      <AnimatePresence>
+        {phase === 'ended' && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 32, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              className="text-center"
+              style={{
+                background: 'rgba(8,9,14,0.9)',
+                backdropFilter: 'blur(24px)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 24,
+                padding: '52px 60px',
+                maxWidth: 480,
+                width: '90vw',
+                boxShadow: '0 32px 80px rgba(0,0,0,0.7)',
+              }}
+            >
+              {/* Checkmark */}
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6"
+                style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.25), rgba(16,185,129,0.15))', border: '1px solid rgba(16,185,129,0.3)' }}
+              >
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                  <path d="M5 13l4 4L19 7" stroke="#34D399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+
+              <h2 className="text-white mb-2" style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em' }}>
+                Presentation complete
+              </h2>
+              <p style={{ color: '#64748B', fontSize: 15, marginBottom: 8 }}>
+                {slideCount} slide{slideCount !== 1 ? 's' : ''} generated
+              </p>
+              <p style={{ color: '#475569', fontSize: 13, lineHeight: 1.6, marginBottom: 32 }}>
+                Your slides are saved and ready to polish. Open the editor to refine content, rearrange slides, and export.
+              </p>
+
+              <motion.button
+                onClick={() => navigate(`/edit/${presentation.id}`)}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl text-base font-semibold text-white mb-3"
+                style={{
+                  background: 'linear-gradient(135deg, #7C3AED, #6D28D9)',
+                  boxShadow: '0 8px 32px rgba(124,58,237,0.4)',
+                }}
+              >
+                <Edit3 size={18} />
+                Edit this presentation
+              </motion.button>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => navigate('/')}
+                  className="flex-1 py-3 rounded-xl text-sm font-medium transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.06)', color: '#94A3B8', border: '1px solid rgba(255,255,255,0.1)' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.1)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                >
+                  New presentation
+                </button>
+                <button
+                  onClick={() => navigate('/library')}
+                  className="flex-1 py-3 rounded-xl text-sm font-medium transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.06)', color: '#94A3B8', border: '1px solid rgba(255,255,255,0.1)' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.1)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                >
+                  Library
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── SPEAKING HUD ──────────────────────────────────────────── */}
+      <AnimatePresence>
+        {phase === 'speaking' && (
+          <>
+            {/* Top bar */}
+            <motion.div
+              initial={{ opacity: 0, y: -16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -16 }}
+              className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-6 py-4"
+              style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.75), transparent)' }}
+            >
+              {/* Left: Logo + title */}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #7C3AED, #4F46E5)' }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 14 C9.5 11.5 5.5 9.5 2 11" stroke="white" strokeWidth="1.75" />
+                      <path d="M2 11 C5 8.5 9 11 12 14" stroke="white" strokeWidth="1.25" opacity="0.55" />
+                      <path d="M12 14 C14.5 11.5 18.5 9.5 22 11" stroke="white" strokeWidth="1.75" />
+                      <path d="M22 11 C19 8.5 15 11 12 14" stroke="white" strokeWidth="1.25" opacity="0.55" />
+                      <line x1="12" y1="7" x2="12" y2="14" stroke="white" strokeWidth="1.75" />
+                      <path d="M10.5 7.5 Q12 5.5 13.5 7.5" stroke="white" strokeWidth="1.5" />
+                      <path d="M10 17 L12 15 L14 17" stroke="white" strokeWidth="1.5" />
+                    </svg>
+                  </div>
+                  <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: 600 }}>
+                    {presentation.title}
+                  </span>
+                </div>
+                <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12 }}>
+                  Slide {slideCount}
+                </span>
+              </div>
+
+              {/* Right: Settings + history toggle + image loading indicator */}
+              <div className="flex items-center gap-2">
+                {isFetchingImage && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl" style={{ background: 'rgba(124,58,237,0.2)' }}>
+                    <div className="w-3 h-3 rounded-full border-2 border-purple-400 border-t-transparent animate-spin" />
+                    <span style={{ color: '#A78BFA', fontSize: 11, fontWeight: 600 }}>New slide…</span>
+                  </div>
+                )}
+                <button
+                  onClick={() => setShowHistory(v => !v)}
+                  className="p-2 rounded-xl transition-colors"
+                  style={{ background: showHistory ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.1)', color: showHistory ? '#A78BFA' : 'rgba(255,255,255,0.7)' }}
+                >
+                  <Layers size={16} />
+                </button>
+                <button
+                  onClick={() => setShowAudioSettings(v => !v)}
+                  className="p-2 rounded-xl transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}
+                >
+                  <Settings2 size={16} />
+                </button>
+              </div>
+            </motion.div>
+
+            {/* Bottom bar: waveform + End button */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 16 }}
+              className="absolute bottom-0 left-0 right-0 z-30 flex items-center gap-4 px-6 pb-6 pt-4"
+              style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)' }}
+            >
+              {/* Live mic indicator */}
+              <div
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                style={{ background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.35)', flexShrink: 0 }}
+              >
+                <div className="w-2 h-2 rounded-full bg-purple-400" style={{ animation: 'pulse 1s ease-in-out infinite' }} />
+                <span style={{ color: '#A78BFA', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em' }}>LIVE</span>
+              </div>
+
+              {/* Waveform + transcript */}
+              <div className="flex-1 flex items-center gap-4 min-w-0">
+                <WaveformVisualizer bars={bars} isListening={true} />
+                {liveTranscript && (
+                  <p className="text-sm truncate" style={{ color: 'rgba(255,255,255,0.5)', fontStyle: 'italic', fontSize: 13 }}>
+                    {liveTranscript}
+                  </p>
+                )}
+                {!liveTranscript && (
+                  <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13 }}>
+                    Listening
+                    <span className="inline-flex gap-px ml-0.5">
+                      {[0, 1, 2].map(i => (
+                        <span key={i} style={{ animation: `pulse ${0.9 + i * 0.15}s ease-in-out ${i * 0.15}s infinite` }}>.</span>
+                      ))}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              {/* Slide count chips */}
+              {slideCount > 1 && (
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {presentation.slides.map((s, i) => (
+                    <div
+                      key={s.id}
+                      className="w-1.5 h-1.5 rounded-full transition-all"
+                      style={{ background: s.id === activeSlideId ? '#A78BFA' : 'rgba(255,255,255,0.25)', transform: s.id === activeSlideId ? 'scale(1.4)' : 'scale(1)' }}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* End button */}
+              <button
+                onClick={endPresentation}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all flex-shrink-0"
+                style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#F87171' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.25)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)'; }}
+              >
+                <Square size={13} fill="#F87171" />
+                End
+              </button>
+            </motion.div>
+
+            {/* Permission error */}
+            <AnimatePresence>
+              {permissionError && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute top-20 left-1/2 -translate-x-1/2 z-50 flex items-start gap-3 px-5 py-3 rounded-2xl"
+                  style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', maxWidth: 500 }}
+                >
+                  <MicOff size={16} style={{ color: '#F87171', flexShrink: 0, marginTop: 2 }} />
+                  <p style={{ color: '#F87171', fontSize: 13, lineHeight: 1.5 }}>{permissionError}</p>
+                  <button onClick={() => setPermissionError(null)}>
+                    <X size={14} style={{ color: '#F87171' }} />
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ── Slide history drawer (slides that have been generated) ── */}
+      <AnimatePresence>
+        {showHistory && phase === 'speaking' && (
+          <motion.div
+            initial={{ x: -300, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: -300, opacity: 0 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+            className="absolute left-0 top-0 bottom-0 z-20 overflow-y-auto py-20 px-3"
+            style={{ width: 220, background: 'rgba(5,5,10,0.95)', backdropFilter: 'blur(20px)', borderRight: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            <p style={{ color: '#475569', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12, paddingLeft: 4 }}>
+              {slideCount} slide{slideCount !== 1 ? 's' : ''}
+            </p>
+            {presentation.slides.map((s, i) => (
+              <SlideThumbnail
+                key={s.id}
+                slide={s}
+                index={i}
+                isActive={viewingSlideIdx === i || (viewingSlideIdx === null && s.id === activeSlideId)}
+                onClick={() => {
+                  if (viewingSlideIdx === i) {
+                    setViewingSlideIdx(null); // click current → go back to live
+                  } else {
+                    setViewingSlideIdx(i);
+                  }
+                }}
+              />
+            ))}
+            {viewingSlideIdx !== null && (
+              <button
+                onClick={() => setViewingSlideIdx(null)}
+                className="w-full py-2 rounded-xl text-xs font-semibold mt-2"
+                style={{ background: 'rgba(124,58,237,0.2)', color: '#A78BFA' }}
+              >
+                ← Back to live
+              </button>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Audio settings panel ────────────────────────────────────── */}
+      <AnimatePresence>
+        {showAudioSettings && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: -8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="absolute top-16 right-6 z-50"
+            style={{ width: 320 }}
+          >
+            <AudioDeviceSettings
+              devices={devices}
+              selectedDeviceId={selectedDeviceId}
+              onSelect={id => { setSelectedDeviceId(id); setShowAudioSettings(false); }}
+              onClose={() => setShowAudioSettings(false)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Speech not supported warning */}
+      {!isSupported && phase === 'intro' && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-2xl z-50"
+          style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)' }}>
+          <p style={{ color: '#FCD34D', fontSize: 13 }}>
+            Speech recognition is not supported in this browser. Try Chrome or Edge.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
