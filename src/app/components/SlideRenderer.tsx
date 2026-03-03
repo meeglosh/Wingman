@@ -7,13 +7,16 @@ interface SlideRendererProps {
   scale?: number;
   isActive?: boolean;
   liveTranscript?: string;
+  fontFamily?: string;
 }
 
 const SLIDE_W = 1280;
 const SLIDE_H = 720;
 
-export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscript }: SlideRendererProps) {
+export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscript, fontFamily }: SlideRendererProps) {
   const { layout, content } = slide;
+
+  const resolvedFont = fontFamily ?? '"Space Grotesk", "Inter", "Segoe UI", system-ui, sans-serif';
 
   const containerStyle: React.CSSProperties = {
     width: SLIDE_W,
@@ -23,7 +26,7 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
     position: 'relative',
     overflow: 'hidden',
     background: slide.backgroundImageUrl ? '#000' : theme.background,
-    fontFamily: '"Space Grotesk", "Inter", "Segoe UI", system-ui, sans-serif',
+    fontFamily: resolvedFont,
   };
 
   return (
@@ -114,14 +117,14 @@ function TitleLayout({ content, theme }: { content: Slide['content']; theme: Sli
       <div style={{ width: 60, height: 4, background: theme.accentColor, borderRadius: 2, marginBottom: 40 }} />
       <h1 style={{
         color: theme.titleColor, fontSize: 72, fontWeight: 800, lineHeight: 1.1,
-        margin: 0, letterSpacing: '-0.02em',
+        margin: 0, letterSpacing: '-0.02em', fontFamily: 'inherit',
       }}>
         {content.title}
       </h1>
       {content.subtitle && (
         <p style={{
           color: theme.mutedColor, fontSize: 28, marginTop: 28, fontWeight: 400,
-          lineHeight: 1.5, maxWidth: 900,
+          lineHeight: 1.5, maxWidth: 900, fontFamily: 'inherit',
         }}>
           {content.subtitle}
         </p>
@@ -138,7 +141,7 @@ function ContentLayout({ content, theme }: { content: Slide['content']; theme: S
       {/* Header bar */}
       <div style={{ height: 6, background: theme.accentColor, width: '100%' }} />
       <div style={{ padding: '40px 72px 0' }}>
-        <h2 style={{ color: theme.titleColor, fontSize: 52, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.15 }}>
+        <h2 style={{ color: theme.titleColor, fontSize: 52, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.15, fontFamily: 'inherit' }}>
           {content.title}
         </h2>
         <div style={{ height: 3, width: 56, background: theme.accentColor, borderRadius: 2, marginBottom: 40 }} />
@@ -151,13 +154,13 @@ function ContentLayout({ content, theme }: { content: Slide['content']; theme: S
               background: theme.accentColor,
               flexShrink: 0, marginTop: 14,
             }} />
-            <p style={{ color: theme.textColor, fontSize: 28, margin: 0, lineHeight: 1.5 }}>
+            <p style={{ color: theme.textColor, fontSize: 28, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
               {bullet}
             </p>
           </div>
         ))}
         {content.body && (
-          <p style={{ color: theme.textColor, fontSize: 28, lineHeight: 1.6, margin: 0 }}>{content.body}</p>
+          <p style={{ color: theme.textColor, fontSize: 28, lineHeight: 1.6, margin: 0, fontFamily: 'inherit' }}>{content.body}</p>
         )}
       </div>
     </div>
@@ -170,7 +173,7 @@ function BulletsLayout({ content, theme }: { content: Slide['content']; theme: S
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ height: 6, background: theme.accentColor, width: '100%' }} />
       <div style={{ padding: '40px 72px 0' }}>
-        <h2 style={{ color: theme.titleColor, fontSize: 48, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>
+        <h2 style={{ color: theme.titleColor, fontSize: 48, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em', fontFamily: 'inherit' }}>
           {content.title}
         </h2>
         <div style={{ height: 3, width: 56, background: theme.accentColor, borderRadius: 2, marginBottom: 32 }} />
@@ -185,9 +188,9 @@ function BulletsLayout({ content, theme }: { content: Slide['content']; theme: S
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0, marginTop: 2,
             }}>
-              <span style={{ color: theme.accentColor, fontSize: 14, fontWeight: 700 }}>{i + 1}</span>
+              <span style={{ color: theme.accentColor, fontSize: 14, fontWeight: 700, fontFamily: 'inherit' }}>{i + 1}</span>
             </div>
-            <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5 }}>
+            <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
               {bullet}
             </p>
           </div>
@@ -211,20 +214,20 @@ function QuoteLayout({ content, theme }: { content: Slide['content']; theme: Sli
       </div>
       <blockquote style={{
         color: theme.titleColor, fontSize: 38, fontStyle: 'italic',
-        margin: '0 0 32px', lineHeight: 1.4, fontWeight: 500,
+        margin: '0 0 32px', lineHeight: 1.4, fontWeight: 500, fontFamily: 'inherit',
       }}>
         {content.quote}
       </blockquote>
       {content.attribution && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div style={{ width: 48, height: 2, background: theme.accentColor }} />
-          <span style={{ color: theme.mutedColor, fontSize: 22, fontWeight: 600 }}>
+          <span style={{ color: theme.mutedColor, fontSize: 22, fontWeight: 600, fontFamily: 'inherit' }}>
             {content.attribution}
           </span>
           <div style={{ width: 48, height: 2, background: theme.accentColor }} />
         </div>
       )}
-      <p style={{ color: theme.mutedColor, fontSize: 20, marginTop: 28, fontStyle: 'normal', fontWeight: 500 }}>
+      <p style={{ color: theme.mutedColor, fontSize: 20, marginTop: 28, fontStyle: 'normal', fontWeight: 500, fontFamily: 'inherit' }}>
         {content.title}
       </p>
     </div>
@@ -238,7 +241,7 @@ function StatsLayout({ content, theme }: { content: Slide['content']; theme: Sli
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ height: 6, background: theme.accentColor, width: '100%' }} />
       <div style={{ padding: '40px 72px 0' }}>
-        <h2 style={{ color: theme.titleColor, fontSize: 48, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>
+        <h2 style={{ color: theme.titleColor, fontSize: 48, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em', fontFamily: 'inherit' }}>
           {content.title}
         </h2>
         <div style={{ height: 3, width: 56, background: theme.accentColor, borderRadius: 2 }} />
@@ -258,10 +261,10 @@ function StatsLayout({ content, theme }: { content: Slide['content']; theme: Sli
             padding: '32px 24px',
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
           }}>
-            <div style={{ fontSize: 64, fontWeight: 800, color: theme.accentColor, lineHeight: 1.1, letterSpacing: '-0.03em' }}>
+            <div style={{ fontSize: 64, fontWeight: 800, color: theme.accentColor, lineHeight: 1.1, letterSpacing: '-0.03em', fontFamily: 'inherit' }}>
               {stat.value}
             </div>
-            <div style={{ color: theme.mutedColor, fontSize: 20, marginTop: 10, lineHeight: 1.3 }}>
+            <div style={{ color: theme.mutedColor, fontSize: 20, marginTop: 10, lineHeight: 1.3, fontFamily: 'inherit' }}>
               {stat.label}
             </div>
           </div>
@@ -278,7 +281,7 @@ function TwoColumnLayout({ content, theme }: { content: Slide['content']; theme:
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ height: 6, background: theme.accentColor, width: '100%' }} />
       <div style={{ padding: '40px 72px 0' }}>
-        <h2 style={{ color: theme.titleColor, fontSize: 48, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em' }}>
+        <h2 style={{ color: theme.titleColor, fontSize: 48, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em', fontFamily: 'inherit' }}>
           {content.title}
         </h2>
         <div style={{ height: 3, width: 56, background: theme.accentColor, borderRadius: 2, marginBottom: 32 }} />
@@ -288,7 +291,7 @@ function TwoColumnLayout({ content, theme }: { content: Slide['content']; theme:
           {left.map((item, i) => (
             <div key={i} style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: theme.accentColor, marginTop: 10, flexShrink: 0 }} />
-              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5 }}>{item}</p>
+              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>{item}</p>
             </div>
           ))}
         </div>
@@ -296,7 +299,7 @@ function TwoColumnLayout({ content, theme }: { content: Slide['content']; theme:
           {right.map((item, i) => (
             <div key={i} style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: theme.accentColor, marginTop: 10, flexShrink: 0 }} />
-              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5 }}>{item}</p>
+              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>{item}</p>
             </div>
           ))}
         </div>
@@ -314,9 +317,10 @@ interface ScaledSlideProps {
   containerHeight: number;
   isActive?: boolean;
   liveTranscript?: string;
+  fontFamily?: string;
 }
 
-export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isActive, liveTranscript }: ScaledSlideProps) {
+export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isActive, liveTranscript, fontFamily }: ScaledSlideProps) {
   const scale = Math.min(containerWidth / SLIDE_W, containerHeight / SLIDE_H);
   const renderedW = SLIDE_W * scale;
   const renderedH = SLIDE_H * scale;
@@ -337,6 +341,7 @@ export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isA
           scale={scale}
           isActive={isActive}
           liveTranscript={liveTranscript}
+          fontFamily={fontFamily}
         />
       </div>
     </div>

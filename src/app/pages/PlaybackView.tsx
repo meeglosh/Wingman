@@ -545,37 +545,38 @@ export default function PlaybackView() {
                 </p>
               </div>
 
-              {/* Next / Done button */}
-              {isLast ? (
-                <button
-                  onClick={(e) => { e.stopPropagation(); navigate(`/edit/${id}`); }}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
-                  style={{
-                    background: 'linear-gradient(135deg, #7C3AED, #6D28D9)',
-                    color: 'white',
-                    boxShadow: '0 4px 16px rgba(124,58,237,0.4)',
-                  }}
-                >
-                  Done
-                </button>
-              ) : (
-                <button
-                  onClick={(e) => { e.stopPropagation(); goNext(); }}
-                  className="flex items-center justify-center w-8 h-8 rounded-full transition-all"
-                  style={{
-                    background: 'rgba(255,255,255,0.1)',
-                    border: '1px solid rgba(255,255,255,0.15)',
-                    color: 'white',
-                  }}
-                >
-                  <ArrowRight size={15} />
-                </button>
-              )}
-            </div>
+              {/* Right side: credit + Next/Done — kept in one flex group so hit zones never overlap */}
+              <div className="flex items-center gap-3 flex-shrink-0">
+                {/* Unsplash credit — to the left of the action button */}
+                <Credit slide={slide} />
 
-            {/* Unsplash credit (bottom-right corner) */}
-            <div className="absolute bottom-4 right-5">
-              <Credit slide={slide} />
+                {/* Next / Done button */}
+                {isLast ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigate(`/edit/${id}`); }}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all"
+                    style={{
+                      background: 'linear-gradient(135deg, #7C3AED, #6D28D9)',
+                      color: 'white',
+                      boxShadow: '0 4px 16px rgba(124,58,237,0.4)',
+                    }}
+                  >
+                    Done
+                  </button>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); goNext(); }}
+                    className="flex items-center justify-center w-8 h-8 rounded-full transition-all"
+                    style={{
+                      background: 'rgba(255,255,255,0.1)',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      color: 'white',
+                    }}
+                  >
+                    <ArrowRight size={15} />
+                  </button>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -600,34 +601,6 @@ export default function PlaybackView() {
             }}
           >
             {currentIdx + 1} / {total}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── End of deck overlay ─────────────────────────────────────────── */}
-      <AnimatePresence>
-        {isLast && showHUD && (
-          <motion.div
-            key="end-badge"
-            initial={{ opacity: 0, scale: 0.85 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.85 }}
-            transition={{ delay: 0.3, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none"
-          >
-            <div
-              className="px-6 py-3 rounded-2xl text-center"
-              style={{
-                background: 'rgba(8,9,14,0.75)',
-                backdropFilter: 'blur(20px)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
-              }}
-            >
-              <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', margin: 0 }}>
-                End of presentation
-              </p>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>

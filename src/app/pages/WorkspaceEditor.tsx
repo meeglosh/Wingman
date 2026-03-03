@@ -13,6 +13,42 @@ import { SlideThumbnail } from '../components/SlideThumbnail';
 import { ScaledSlide } from '../components/SlideRenderer';
 import type { Presentation, Slide, SlideLayout, SlideTheme } from '../types/presentation';
 
+// ─── Presentation fonts ───────────────────────────────────────────────────────
+const PRESENTATION_FONTS: Array<{ name: string; family: string; category: 'sans' | 'display' | 'serif' }> = [
+  { name: 'Space Grotesk', family: '"Space Grotesk", sans-serif',        category: 'sans'    },
+  { name: 'Inter',          family: '"Inter", sans-serif',                category: 'sans'    },
+  { name: 'Plus Jakarta Sans', family: '"Plus Jakarta Sans", sans-serif', category: 'sans'    },
+  { name: 'Outfit',         family: '"Outfit", sans-serif',               category: 'sans'    },
+  { name: 'DM Sans',        family: '"DM Sans", sans-serif',              category: 'sans'    },
+  { name: 'Manrope',        family: '"Manrope", sans-serif',              category: 'sans'    },
+  { name: 'Nunito',         family: '"Nunito", sans-serif',               category: 'sans'    },
+  { name: 'Poppins',        family: '"Poppins", sans-serif',              category: 'sans'    },
+  { name: 'Syne',           family: '"Syne", sans-serif',                 category: 'display' },
+  { name: 'Raleway',        family: '"Raleway", sans-serif',              category: 'display' },
+  { name: 'Josefin Sans',   family: '"Josefin Sans", sans-serif',         category: 'display' },
+  { name: 'Montserrat',     family: '"Montserrat", sans-serif',           category: 'display' },
+  { name: 'Playfair Display', family: '"Playfair Display", serif',        category: 'serif'   },
+  { name: 'Cormorant Garamond', family: '"Cormorant Garamond", serif',    category: 'serif'   },
+  { name: 'Libre Baskerville', family: '"Libre Baskerville", serif',      category: 'serif'   },
+  { name: 'DM Serif Display', family: '"DM Serif Display", serif',        category: 'serif'   },
+];
+
+const DEFAULT_FONT = PRESENTATION_FONTS[0];
+
+function loadGoogleFont(name: string) {
+  if (name === 'Space Grotesk') return; // already in global CSS
+  const id = `gfont-${name.replace(/\s+/g, '-').toLowerCase()}`;
+  if (document.getElementById(id)) return;
+  const link = document.createElement('link');
+  link.id = id;
+  link.rel = 'stylesheet';
+  link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(name)}:wght@400;500;600;700;800&display=swap`;
+  document.head.appendChild(link);
+}
+
+// Pre-load all fonts as soon as the module is evaluated so previews render correctly
+PRESENTATION_FONTS.forEach(f => loadGoogleFont(f.name));
+
 const LAYOUT_OPTIONS: Array<{ id: SlideLayout; label: string; icon: React.ReactNode }> = [
   { id: 'title', label: 'Title', icon: <Type size={14} /> },
   { id: 'content', label: 'Content', icon: <Layout size={14} /> },
@@ -329,6 +365,7 @@ export default function WorkspaceEditor() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   const [showExport, setShowExport] = useState(false);
+  const [showFontPicker, setShowFontPicker] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [saved, setSaved] = useState(false);
@@ -418,6 +455,16 @@ export default function WorkspaceEditor() {
     saveOrUpdate(updated);
   };
 
+  const handleFontChange = (fontFamily: string) => {
+    const updated = { ...presentation, fontFamily, updatedAt: Date.now() };
+    setPresentation(updated);
+    saveOrUpdate(updated);
+    setShowFontPicker(false);
+  };
+
+  const currentFont =
+    PRESENTATION_FONTS.find(f => f.family === presentation.fontFamily) ?? DEFAULT_FONT;
+
   return (
     <div className="fixed inset-0 flex flex-col" style={{ background: '#08090E', fontFamily: '"Space Grotesk", "Inter", system-ui, sans-serif' }}>
       {/* Toolbar */}
@@ -505,6 +552,80 @@ export default function WorkspaceEditor() {
               />
             );
           })}
+        </div>
+
+        {/* Font selector */}
+        <div className="relative">
+          <button
+            onClick={() => setShowFontPicker(v => !v)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium"
+            style={{ background: 'rgba(255,255,255,0.07)', color: '#94A3B8', border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            <Type size={14} />
+            {currentFont.name}
+          </button>
+          <AnimatePresence>
+            {showFontPicker && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowFontPicker(false)} />
+                <div className="z-50 relative">
+                  <motion.div
+                    initial={{ opacity: 0, y: -8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.95 }}
+                    className="absolute right-0 top-10 rounded-xl overflow-hidden z-50"
+                    style={{ width: 220, background: '#1A1B25', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}
+                  >
+                    {/* Header */}
+                    <div className="px-4 py-2.5 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                      <span style={{ color: '#64748B', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                        Presentation Font
+                      </span>
+                    </div>
+
+                    <div className="py-1 max-h-80 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+                      {(['sans', 'display', 'serif'] as const).map(category => {
+                        const fonts = PRESENTATION_FONTS.filter(f => f.category === category);
+                        const labels: Record<typeof category, string> = { sans: 'Sans-Serif', display: 'Display', serif: 'Serif' };
+                        return (
+                          <div key={category}>
+                            <div className="px-4 pt-2 pb-1">
+                              <span style={{ color: '#475569', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                {labels[category]}
+                              </span>
+                            </div>
+                            {fonts.map(opt => {
+                              const isActive = (presentation.fontFamily ?? DEFAULT_FONT.family) === opt.family;
+                              return (
+                                <button
+                                  key={opt.name}
+                                  onClick={() => handleFontChange(opt.family)}
+                                  className="w-full flex items-center justify-between px-4 py-2 text-left transition-colors hover:bg-white/5"
+                                  style={{ background: isActive ? 'rgba(124,58,237,0.12)' : 'transparent' }}
+                                >
+                                  <span style={{
+                                    fontFamily: opt.family,
+                                    fontSize: 14,
+                                    fontWeight: 500,
+                                    color: isActive ? '#A78BFA' : '#CBD5E1',
+                                  }}>
+                                    {opt.name}
+                                  </span>
+                                  {isActive && (
+                                    <Check size={13} style={{ color: '#A78BFA', flexShrink: 0 }} />
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                </div>
+              </>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Present */}
@@ -622,6 +743,7 @@ export default function WorkspaceEditor() {
                     theme={theme}
                     containerWidth={Math.min(containerSize.w - 64, 1000)}
                     containerHeight={Math.min(containerSize.h - 80, 563)}
+                    fontFamily={presentation.fontFamily}
                   />
                 </div>
                 <p style={{ color: '#475569', fontSize: 11 }}>

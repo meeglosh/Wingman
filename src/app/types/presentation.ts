@@ -33,6 +33,7 @@ export interface Presentation {
   title: string;
   slides: Slide[];
   themeId: string;
+  fontFamily?: string;
   createdAt: number;
   updatedAt: number;
 }
