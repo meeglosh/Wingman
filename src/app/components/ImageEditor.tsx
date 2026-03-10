@@ -14,14 +14,27 @@ interface ImageEditorProps {
 export function ImageEditor({ images, onChange, scale }: ImageEditorProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Deselect on Escape, delete on Backspace/Delete
+  // Keyboard shortcuts for selected image
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const activeEditable = (document.activeElement as HTMLElement)?.isContentEditable
+        || ['INPUT', 'TEXTAREA'].includes((document.activeElement as HTMLElement)?.tagName);
+
       if (e.key === 'Escape') { setSelectedId(null); return; }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
-        // Only delete image if not focused on a text input
-        const tag = (document.activeElement as HTMLElement)?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement as HTMLElement)?.isContentEditable) return;
+
+      if (!selectedId || activeEditable) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        onChange(images.filter(img => img.id !== selectedId));
+        setSelectedId(null);
+      }
+
+      // Cmd+X — cut: stash in buffer, remove from slide
+      if ((e.metaKey || e.ctrlKey) && e.key === 'x') {
+        const target = images.find(img => img.id === selectedId);
+        if (!target) return;
+        e.preventDefault();
+        cutBuffer = target;
         onChange(images.filter(img => img.id !== selectedId));
         setSelectedId(null);
       }
@@ -93,9 +106,24 @@ export function ImageEditor({ images, onChange, scale }: ImageEditorProps) {
   );
 }
 
+// ── Module-level cut buffer (persists across slides during a session) ──────────
+let cutBuffer: SlideImage | null = null;
+
 // ── Paste handler hook ─────────────────────────────────────────────────────────
 export function useImagePaste(onPaste: (img: SlideImage) => void) {
-  const handler = useCallback((e: ClipboardEvent) => {
+  // Cmd+V: check cut buffer first, fall back to system clipboard
+  const onKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!(e.metaKey || e.ctrlKey) || e.key !== 'v') return;
+    if (!cutBuffer) return;
+    e.preventDefault();
+    const img = { ...cutBuffer, id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 7)}` };
+    cutBuffer = null;
+    onPaste(img);
+  }, [onPaste]);
+
+  const onPasteEvent = useCallback((e: ClipboardEvent) => {
+    // If there's a cut buffer in flight, the keydown handler takes priority
+    if (cutBuffer) return;
     const items = Array.from(e.clipboardData?.items ?? []);
     const imageItem = items.find(item => item.type.startsWith('image/'));
     if (!imageItem) return;
@@ -105,7 +133,6 @@ export function useImagePaste(onPaste: (img: SlideImage) => void) {
     const reader = new FileReader();
     reader.onload = ev => {
       const url = ev.target?.result as string;
-      // Load image to get natural dimensions, fit within slide with some padding
       const img = new Image();
       img.onload = () => {
         const maxW = SLIDE_W * 0.5;
@@ -128,9 +155,13 @@ export function useImagePaste(onPaste: (img: SlideImage) => void) {
   }, [onPaste]);
 
   useEffect(() => {
-    window.addEventListener('paste', handler);
-    return () => window.removeEventListener('paste', handler);
-  }, [handler]);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('paste', onPasteEvent);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('paste', onPasteEvent);
+    };
+  }, [onKeyDown, onPasteEvent]);
 }
 
 // ── Resize handle styles ───────────────────────────────────────────────────────
