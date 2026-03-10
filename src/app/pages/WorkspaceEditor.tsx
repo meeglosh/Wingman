@@ -574,10 +574,19 @@ export default function WorkspaceEditor() {
   };
 
   const handleDuplicateSlide = (slide: Slide) => {
-    const dup = { ...slide, content: { ...slide.content }, generatedAt: Date.now() };
-    const updated = addSlide(presentation, dup);
+    const idx = presentation.slides.findIndex(s => s.id === slide.id);
+    const dup: Slide = {
+      ...slide,
+      content: JSON.parse(JSON.stringify(slide.content)),
+      id: `slide_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      generatedAt: Date.now(),
+    };
+    const slides = [...presentation.slides];
+    slides.splice(idx + 1, 0, dup);
+    const updated = { ...presentation, slides, updatedAt: Date.now() };
     setPresentation(updated);
-    setSelectedIdx(updated.slides.length - 1);
+    saveOrUpdate(updated);
+    setSelectedIdx(idx + 1);
   };
 
   const handleAddBlankSlide = () => {

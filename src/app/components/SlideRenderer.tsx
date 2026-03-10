@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import type { Slide, SlideContent, SlideImage, SlideTheme } from '../types/presentation';
 
 interface SlideRendererProps {
@@ -169,6 +169,27 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
   );
 }
 
+// ─── Remove button for array items ────────────────────────────────────────────
+function RemoveBtn({ onRemove, style }: { onRemove: () => void; style?: React.CSSProperties }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={e => { e.preventDefault(); e.stopPropagation(); onRemove(); }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        background: hover ? 'rgba(239,68,68,0.85)' : 'rgba(239,68,68,0.35)',
+        border: 'none', borderRadius: '50%',
+        width: 24, height: 24, cursor: 'pointer', color: 'white',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: 0, fontSize: 16, lineHeight: 1,
+        transition: 'background 0.15s', pointerEvents: 'auto',
+        ...style,
+      }}
+    >×</button>
+  );
+}
+
 // ─── Layout helpers ────────────────────────────────────────────────────────────
 
 type LayoutProps = { content: SlideContent; theme: SlideTheme; onEdit?: (p: Partial<SlideContent>) => void };
@@ -212,9 +233,10 @@ function ContentLayout({ content, theme, onEdit }: LayoutProps) {
         {bullets.map((bullet, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 20 }}>
             <div style={{ width: 10, height: 10, borderRadius: '50%', background: theme.accentColor, flexShrink: 0, marginTop: 14 }} />
-            <p style={{ color: theme.textColor, fontSize: 28, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
+            <p style={{ color: theme.textColor, fontSize: 28, margin: 0, lineHeight: 1.5, fontFamily: 'inherit', flex: 1 }}>
               <T value={bullet} onChange={v => { const b = [...bullets]; b[i] = v; onEdit?.({ bullets: b }); }} onEdit={onEdit} multiline />
             </p>
+            {onEdit && <RemoveBtn onRemove={() => onEdit({ bullets: bullets.filter((_, j) => j !== i) })} />}
           </div>
         ))}
         {content.body !== undefined && (
@@ -244,9 +266,10 @@ function BulletsLayout({ content, theme, onEdit }: LayoutProps) {
             <div style={{ width: 32, height: 32, borderRadius: '50%', background: theme.borderColor, border: `2px solid ${theme.accentColor}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 2 }}>
               <span style={{ color: theme.accentColor, fontSize: 14, fontWeight: 700, fontFamily: 'inherit' }}>{i + 1}</span>
             </div>
-            <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
+            <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit', flex: 1 }}>
               <T value={bullet} onChange={v => { const b = [...bullets]; b[i] = v; onEdit?.({ bullets: b }); }} onEdit={onEdit} multiline />
             </p>
+            {onEdit && <RemoveBtn onRemove={() => onEdit({ bullets: bullets.filter((_, j) => j !== i) })} />}
           </div>
         ))}
       </div>
@@ -295,7 +318,8 @@ function StatsLayout({ content, theme, onEdit }: LayoutProps) {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 24, padding: '40px 72px', flex: 1 }}>
         {stats.slice(0, cols).map((stat, i) => (
-          <div key={i} style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.borderColor}`, borderRadius: 16, padding: '32px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+          <div key={i} style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.borderColor}`, borderRadius: 16, padding: '32px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', position: 'relative' }}>
+            {onEdit && <RemoveBtn onRemove={() => onEdit({ stats: stats.filter((_, j) => j !== i) })} style={{ position: 'absolute', top: 10, right: 10 }} />}
             <div style={{ fontSize: 64, fontWeight: 800, color: theme.accentColor, lineHeight: 1.1, letterSpacing: '-0.03em', fontFamily: 'inherit' }}>
               <T value={stat.value} onChange={v => { const s = [...stats]; s[i] = { ...s[i], value: v }; onEdit?.({ stats: s }); }} onEdit={onEdit} />
             </div>
@@ -326,9 +350,10 @@ function TwoColumnLayout({ content, theme, onEdit }: LayoutProps) {
           {left.map((item, i) => (
             <div key={i} style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: theme.accentColor, marginTop: 10, flexShrink: 0 }} />
-              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
+              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit', flex: 1 }}>
                 <T value={item} onChange={v => { const l = [...left]; l[i] = v; onEdit?.({ leftColumn: l }); }} onEdit={onEdit} multiline />
               </p>
+              {onEdit && <RemoveBtn onRemove={() => onEdit({ leftColumn: left.filter((_, j) => j !== i) })} />}
             </div>
           ))}
         </div>
@@ -336,9 +361,10 @@ function TwoColumnLayout({ content, theme, onEdit }: LayoutProps) {
           {right.map((item, i) => (
             <div key={i} style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: theme.accentColor, marginTop: 10, flexShrink: 0 }} />
-              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
+              <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit', flex: 1 }}>
                 <T value={item} onChange={v => { const r = [...right]; r[i] = v; onEdit?.({ rightColumn: r }); }} onEdit={onEdit} multiline />
               </p>
+              {onEdit && <RemoveBtn onRemove={() => onEdit({ rightColumn: right.filter((_, j) => j !== i) })} />}
             </div>
           ))}
         </div>
