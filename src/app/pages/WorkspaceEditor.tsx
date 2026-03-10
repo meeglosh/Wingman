@@ -797,6 +797,7 @@ export default function WorkspaceEditor() {
                     containerWidth={Math.min(containerSize.w - 64, 1000)}
                     containerHeight={Math.min(containerSize.h - 80, 563)}
                     fontFamily={presentation.fontFamily}
+                    onEdit={patch => handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, ...patch } })}
                   />
                 </div>
                 <p style={{ color: '#475569', fontSize: 11 }}>
