@@ -48,10 +48,7 @@ export function ImageEditor({ images, onChange, scale }: ImageEditorProps) {
   };
 
   return (
-    <div
-      style={{ position: 'absolute', inset: 0, zIndex: 10 }}
-      onClick={e => { if (e.target === e.currentTarget) setSelectedId(null); }}
-    >
+    <div style={{ position: 'absolute', inset: 0, zIndex: 10, pointerEvents: 'none' }}>
       {images.map(img => {
         const selected = img.id === selectedId;
         return (
@@ -75,6 +72,7 @@ export function ImageEditor({ images, onChange, scale }: ImageEditorProps) {
               outline: selected ? '2px solid #0066cc' : '2px solid transparent',
               borderRadius: 4,
               cursor: 'move',
+              pointerEvents: 'auto',
             }}
             resizeHandleStyles={selected ? HANDLE_STYLES : HIDDEN_HANDLES}
           >
