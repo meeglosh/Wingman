@@ -5,6 +5,7 @@ import { Plus, Mic, Edit3, Play, Trash2, Clock, Layers, ArrowLeft, Upload } from
 import { usePresentations } from '../context/PresentationContext';
 import { SLIDE_THEMES } from '../utils/themes';
 import { importFromHTML } from '../utils/exportUtils';
+import { ScaledSlide } from '../components/SlideRenderer';
 import type { Presentation } from '../types/presentation';
 
 function formatDate(ts: number) {
@@ -63,6 +64,16 @@ function PresentationCard({
       >
         {firstBg ? (
           <img src={firstBg} alt={presentation.title} className="w-full h-full object-cover" style={{ filter: 'brightness(0.65)' }} />
+        ) : presentation.slides[0] ? (
+          <div style={{ width: '100%', height: '100%', pointerEvents: 'none', overflow: 'hidden' }}>
+            <ScaledSlide
+              slide={presentation.slides[0]}
+              theme={theme}
+              containerWidth={360}
+              containerHeight={180}
+              fontFamily={presentation.fontFamily}
+            />
+          </div>
         ) : (
           <div style={{ width: '100%', height: '100%', background: theme.background }} />
         )}
