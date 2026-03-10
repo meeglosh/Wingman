@@ -2,9 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  ArrowLeft, Play, Download, Plus, Trash2, Copy, ChevronUp, ChevronDown,
-  Type, BarChart2, Quote, Columns, List, Layout, Check, X, Pencil
+  ArrowLeft, Play, Download, Plus, Trash2, Copy,
+  Type, BarChart2, Quote, Columns, List, Layout, Check, X, Pencil, GripVertical
 } from 'lucide-react';
+import {
+  DndContext, closestCenter, PointerSensor, KeyboardSensor,
+  useSensor, useSensors, type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext, verticalListSortingStrategy,
+  useSortable, sortableKeyboardCoordinates,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
 import { getTheme, SLIDE_THEMES } from '../utils/themes';
@@ -408,6 +417,37 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
   );
 }
 
+// ─── Slide clipboard (module-level, persists across slides) ──────────────────
+let slideClipboard: Slide | null = null;
+
+// ─── Sortable slide item ──────────────────────────────────────────────────────
+function SortableSlideItem({ slide, index, isSelected, onClick, onDelete, onDuplicate, theme }: {
+  slide: Slide; index: number; isSelected: boolean; theme: SlideTheme;
+  onClick: () => void; onDelete: () => void; onDuplicate: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slide.id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
+      className="relative"
+    >
+      <div
+        {...attributes} {...listeners}
+        style={{ position: 'absolute', left: 4, top: '50%', transform: 'translateY(-50%)', zIndex: 10, cursor: 'grab', color: '#334155', padding: 2 }}
+        title="Drag to reorder"
+      >
+        <GripVertical size={12} />
+      </div>
+      <SlideThumbnail
+        slide={slide} theme={theme} index={index}
+        isSelected={isSelected} onClick={onClick}
+        onDelete={onDelete} onDuplicate={onDuplicate}
+      />
+    </div>
+  );
+}
+
 // ─── Main Editor ────────────────────────────────────────────────────────────
 export default function WorkspaceEditor() {
   const { id } = useParams<{ id: string }>();
@@ -427,6 +467,27 @@ export default function WorkspaceEditor() {
   // Stable ref so useImagePaste (called unconditionally) can access current slide
   const addImageRef = useRef<((img: import('../types/presentation').SlideImage) => void) | null>(null);
   useImagePaste(img => addImageRef.current?.(img));
+
+  // Stable ref for slide copy/paste — populated after the early return
+  const slideCopyPasteRef = useRef<{ copy: () => void; paste: () => void } | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const active = document.activeElement as HTMLElement;
+      if (active?.isContentEditable || ['INPUT', 'TEXTAREA'].includes(active?.tagName)) return;
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c') slideCopyPasteRef.current?.copy();
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && slideClipboard) {
+        e.preventDefault();
+        slideCopyPasteRef.current?.paste();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   useEffect(() => {
     if (!id) return;
@@ -459,6 +520,33 @@ export default function WorkspaceEditor() {
 
   const theme = getTheme(presentation.themeId);
   const selectedSlide = presentation.slides[selectedIdx];
+
+  // Slide copy/paste
+  slideCopyPasteRef.current = {
+    copy: () => { slideClipboard = JSON.parse(JSON.stringify(selectedSlide)); },
+    paste: () => {
+      if (!slideClipboard) return;
+      const newSlide: Slide = {
+        ...JSON.parse(JSON.stringify(slideClipboard)),
+        id: `slide_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        generatedAt: Date.now(),
+      };
+      const slides = [...presentation.slides];
+      slides.splice(selectedIdx + 1, 0, newSlide);
+      const updated = { ...presentation, slides, updatedAt: Date.now() };
+      setPresentation(updated);
+      saveOrUpdate(updated);
+      setSelectedIdx(selectedIdx + 1);
+    },
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIdx = presentation.slides.findIndex(s => s.id === active.id);
+    const newIdx = presentation.slides.findIndex(s => s.id === over.id);
+    if (oldIdx !== -1 && newIdx !== -1) handleMoveSlide(oldIdx, newIdx);
+  };
 
   const handleImagesChange = (images: typeof selectedSlide.content.images) => {
     if (!selectedSlide) return;
@@ -754,41 +842,25 @@ export default function WorkspaceEditor() {
           <div className="flex-1 overflow-y-auto py-2">
             {presentation.slides.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 px-4 text-center">
-                <p style={{ color: '#475569', fontSize: 12 }}>No slides yet. Go to presentation mode to create slides with your voice.</p>
+                <p style={{ color: '#475569', fontSize: 12 }}>No slides yet. Add a blank slide to get started.</p>
               </div>
             ) : (
-              presentation.slides.map((slide, i) => (
-                <div key={slide.id} className="relative">
-                  <SlideThumbnail
-                    slide={slide}
-                    theme={theme}
-                    index={i}
-                    isSelected={i === selectedIdx}
-                    onClick={() => setSelectedIdx(i)}
-                    onDelete={() => setDeleteConfirmId(slide.id)}
-                    onDuplicate={() => handleDuplicateSlide(slide)}
-                  />
-                  {/* Reorder buttons */}
-                  <div className="absolute right-2 top-8 opacity-0 hover:opacity-100 flex flex-col gap-0.5 transition-opacity">
-                    <button
-                      onClick={() => handleMoveSlide(i, i - 1)}
-                      disabled={i === 0}
-                      className="p-0.5 rounded disabled:opacity-30"
-                      style={{ background: 'rgba(0,0,0,0.5)', color: 'white' }}
-                    >
-                      <ChevronUp size={12} />
-                    </button>
-                    <button
-                      onClick={() => handleMoveSlide(i, i + 1)}
-                      disabled={i === presentation.slides.length - 1}
-                      className="p-0.5 rounded disabled:opacity-30"
-                      style={{ background: 'rgba(0,0,0,0.5)', color: 'white' }}
-                    >
-                      <ChevronDown size={12} />
-                    </button>
-                  </div>
-                </div>
-              ))
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={presentation.slides.map(s => s.id)} strategy={verticalListSortingStrategy}>
+                  {presentation.slides.map((slide, i) => (
+                    <SortableSlideItem
+                      key={slide.id}
+                      slide={slide}
+                      theme={theme}
+                      index={i}
+                      isSelected={i === selectedIdx}
+                      onClick={() => setSelectedIdx(i)}
+                      onDelete={() => setDeleteConfirmId(slide.id)}
+                      onDuplicate={() => handleDuplicateSlide(slide)}
+                    />
+                  ))}
+                </SortableContext>
+              </DndContext>
             )}
           </div>
         </div>
