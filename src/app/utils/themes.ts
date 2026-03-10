@@ -100,6 +100,17 @@ export const SLIDE_THEMES: SlideTheme[] = [
     bulletColor: '#C2410C',
     borderColor: 'rgba(194,65,12,0.2)',
   },
+  {
+    id: 'terminal',
+    name: 'Terminal',
+    background: 'linear-gradient(135deg, #0d0d0d 0%, #141414 100%)',
+    titleColor: '#f0f0f0',
+    textColor: '#c8c8c8',
+    accentColor: '#66b3ff',
+    mutedColor: '#a0a0a0',
+    bulletColor: '#66b3ff',
+    borderColor: 'rgba(102,179,255,0.2)',
+  },
 ];
 
 export function getTheme(id: string): SlideTheme {
