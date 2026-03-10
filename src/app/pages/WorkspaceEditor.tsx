@@ -424,6 +424,9 @@ export default function WorkspaceEditor() {
   const [saved, setSaved] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  // Stable ref so useImagePaste (called unconditionally) can access current slide
+  const addImageRef = useRef<((img: import('../types/presentation').SlideImage) => void) | null>(null);
+  useImagePaste(img => addImageRef.current?.(img));
 
   useEffect(() => {
     if (!id) return;
@@ -462,11 +465,12 @@ export default function WorkspaceEditor() {
     handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, images } });
   };
 
-  useImagePaste(img => {
+  // Keep ref current so the unconditional hook above can call it
+  addImageRef.current = img => {
     if (!selectedSlide) return;
     const images = [...(selectedSlide.content.images ?? []), img];
     handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, images } });
-  });
+  };
 
   const handleSlideChange = (updatedSlide: Slide) => {
     const updated = updateSlide(presentation, updatedSlide);
