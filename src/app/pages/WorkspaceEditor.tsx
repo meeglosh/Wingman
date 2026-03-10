@@ -8,7 +8,7 @@ import {
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
 import { getTheme, SLIDE_THEMES } from '../utils/themes';
-import { exportToPPTX } from '../utils/exportUtils';
+import { exportToPPTX, exportToHTML } from '../utils/exportUtils';
 import { SlideThumbnail } from '../components/SlideThumbnail';
 import { ScaledSlide } from '../components/SlideRenderer';
 import type { Presentation, Slide, SlideLayout, SlideTheme } from '../types/presentation';
@@ -325,6 +325,11 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
     onClose();
   };
 
+  const handleDownloadHTML = () => {
+    exportToHTML(presentation);
+    onClose();
+  };
+
   const handleCopyLink = async () => {
     const url = `${window.location.origin}/playback/${presentation.id}`;
     try { await navigator.clipboard.writeText(url); } catch {}
@@ -362,6 +367,21 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
         <div>
           <p className="font-medium" style={{ fontSize: 13 }}>Download file</p>
           <p style={{ color: '#64748B', fontSize: 11 }}>PowerPoint (.pptx)</p>
+        </div>
+      </button>
+
+      {/* Download .html */}
+      <button
+        onClick={handleDownloadHTML}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5"
+        style={{ color: '#E2E8F0' }}
+      >
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(14,165,233,0.15)' }}>
+          <Download size={14} style={{ color: '#38BDF8' }} />
+        </div>
+        <div>
+          <p className="font-medium" style={{ fontSize: 13 }}>Download file</p>
+          <p style={{ color: '#64748B', fontSize: 11 }}>Standalone HTML</p>
         </div>
       </button>
 

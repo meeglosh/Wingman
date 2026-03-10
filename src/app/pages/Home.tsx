@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mic, ArrowRight, BookOpen, Loader2, ChevronDown, Type } from 'lucide-react';
+import { Plus, ArrowRight, BookOpen, Loader2, ChevronDown, Type } from 'lucide-react';
 import { usePresentations } from '../context/PresentationContext';
 import { createNewPresentation } from '../utils/storage';
 import { SLIDE_THEMES } from '../utils/themes';
@@ -72,7 +72,7 @@ export default function Home() {
     setIsGenerating(true);
     const presentation = createNewPresentation(trimmed, themeId, selectedFont.family);
     saveOrUpdate(presentation);
-    navigate(`/present/${presentation.id}`);
+    navigate(`/edit/${presentation.id}`);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -158,7 +158,7 @@ export default function Home() {
               today?
             </span>
           </h1>
-          <p className="text-center mb-10" style={{ color: '#64748B', fontSize: 16, lineHeight: 1.6 }}>Describe your topic and Wingman will build the first slide. Then just speak; your presentation grows as you talk.</p>
+          <p className="text-center mb-10" style={{ color: '#64748B', fontSize: 16, lineHeight: 1.6 }}>Name your presentation, pick a theme, and start building — add slides manually or let an agent do it for you via the CLI.</p>
 
           {/* Topic input card */}
           <div
@@ -335,9 +335,9 @@ export default function Home() {
                 {isGenerating ? (
                   <Loader2 size={15} className="animate-spin" />
                 ) : (
-                  <Mic size={15} />
+                  <Plus size={15} />
                 )}
-                {isGenerating ? 'Preparing…' : 'Generate first slide'}
+                {isGenerating ? 'Creating…' : 'Create presentation'}
                 {!isGenerating && <ArrowRight size={14} />}
               </motion.button>
             </div>
@@ -357,8 +357,8 @@ export default function Home() {
           className="flex flex-wrap gap-2.5 mt-16 justify-center"
         >
           {[
-            { icon: '🎙️', text: 'Speech-to-slide in real time' },
-            { icon: '🖼️', text: 'AI-matched photo backgrounds' },
+            { icon: '🤖', text: 'CLI-driven by you or an AI agent' },
+            { icon: '🎨', text: '6 beautiful themes' },
             { icon: '📊', text: 'Export to PowerPoint & Keynote' },
             { icon: '✏️', text: 'Edit every slide after the fact' },
           ].map(f => (

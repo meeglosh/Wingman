@@ -1,26 +1,14 @@
-import { projectId, publicAnonKey } from '/utils/supabase/info';
-
 export interface UnsplashPhoto {
   url: string;
   alt: string;
   credit: { name: string; profileUrl: string };
 }
 
-export async function fetchUnsplashImage(query: string): Promise<UnsplashPhoto | null> {
-  try {
-    const res = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/make-server-8474fcb9/unsplash?q=${encodeURIComponent(query)}`,
-      { headers: { Authorization: `Bearer ${publicAnonKey}` } },
-    );
-    if (!res.ok) {
-      console.log('Unsplash fetch failed:', res.status, await res.text());
-      return null;
-    }
-    const data = await res.json();
-    if (!data.url) return null;
-    return data as UnsplashPhoto;
-  } catch (e) {
-    console.log('Unsplash fetch error:', e);
-    return null;
-  }
+/**
+ * Fetch a background image for a slide.
+ * Stub: returns null until an image API is wired up.
+ * To add image generation, implement this function with OpenAI/Gemini/Unsplash.
+ */
+export async function fetchUnsplashImage(_query: string): Promise<UnsplashPhoto | null> {
+  return null;
 }

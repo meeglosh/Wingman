@@ -4,8 +4,13 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "dev": "node server/dev.js",
     "build": "vite build",
-    "dev": "vite"
+    "start": "node server/index.js",
+    "wingman": "node bin/wingman.js"
+  },
+  "bin": {
+    "wingman": "bin/wingman.js"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

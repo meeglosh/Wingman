@@ -3,6 +3,7 @@ import { getTheme } from './themes';
 
 interface ExportColors {
   bg: string;
+  bg2: string;
   title: string;
   text: string;
   accent: string;
@@ -12,11 +13,12 @@ interface ExportColors {
 function colorsFromTheme(themeId: string): ExportColors {
   const theme = getTheme(themeId);
   const strip = (c: string) => c.startsWith('#') ? c.slice(1) : c;
-  const bgMatch = theme.background.match(/#([0-9A-Fa-f]{6})/);
+  const bgMatches = [...theme.background.matchAll(/#([0-9A-Fa-f]{6})/g)].map(m => m[1]);
   return {
-    bg: bgMatch ? bgMatch[1] : '0F0F1A',
+    bg:    bgMatches[0] ?? '0F0F1A',
+    bg2:   bgMatches[1] ?? bgMatches[0] ?? '0F0F1A',
     title: strip(theme.titleColor),
-    text: strip(theme.textColor),
+    text:  strip(theme.textColor),
     accent: strip(theme.accentColor),
     muted: strip(theme.mutedColor),
   };
@@ -73,6 +75,7 @@ function generateHTMLPresentation(presentation: Presentation): string {
   }).join('\n');
 
   return `<!DOCTYPE html>
+<!-- wingman-data: ${JSON.stringify(presentation).replace(/-->/g, '--\\>')} -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -172,38 +175,76 @@ async function tryPPTXExport(presentation: Presentation): Promise<boolean> {
     const theme = getTheme(presentation.themeId);
     const colors = colorsFromTheme(presentation.themeId);
 
+    // Use the presentation's font family if it's a safe system/web-safe name,
+    // otherwise fall back to Calibri which PowerPoint always has.
+    const font = presentation.fontFamily
+      ? presentation.fontFamily.split(',')[0].trim().replace(/['"]/g, '')
+      : 'Calibri';
+
     for (const slide of presentation.slides) {
       const pSlide = pptx.addSlide();
+
+      // Gradient background: fill with darkest color, then overlay a lighter rect to hint at gradient.
       pSlide.background = { color: colors.bg };
+      if (colors.bg !== colors.bg2) {
+        pSlide.addShape(pptx.ShapeType.rect, {
+          x: 0, y: 0, w: '100%', h: '100%',
+          fill: { color: colors.bg2, transparency: 60 },
+          line: { type: 'none' },
+        });
+      }
 
       if (slide.layout === 'title') {
-        pSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 3.8, w: '100%', h: 0.06, fill: { color: colors.accent }, line: { color: colors.accent } });
-        pSlide.addText(slide.content.title, { x: 0.8, y: 1.0, w: 8.4, h: 2.0, fontSize: 44, bold: true, color: colors.title, align: 'center', fontFace: 'Calibri' });
+        // Centered accent line + title + subtitle
+        pSlide.addShape(pptx.ShapeType.rect, { x: 3.8, y: 2.1, w: 2.4, h: 0.05, fill: { color: colors.accent }, line: { type: 'none' } });
+        pSlide.addText(slide.content.title, { x: 0.8, y: 1.0, w: 8.4, h: 1.8, fontSize: 44, bold: true, color: colors.title, align: 'center', fontFace: font });
         if (slide.content.subtitle) {
-          pSlide.addText(slide.content.subtitle, { x: 0.8, y: 3.2, w: 8.4, h: 1.0, fontSize: 20, color: colors.muted, align: 'center', fontFace: 'Calibri' });
+          pSlide.addText(slide.content.subtitle, { x: 0.8, y: 2.4, w: 8.4, h: 1.2, fontSize: 20, color: colors.muted, align: 'center', fontFace: font });
         }
       } else if (slide.layout === 'quote') {
-        pSlide.addShape(pptx.ShapeType.rect, { x: 0.3, y: 0.8, w: 0.08, h: 3.5, fill: { color: colors.accent }, line: { color: colors.accent } });
-        pSlide.addText(`"${slide.content.quote ?? ''}"`, { x: 0.6, y: 1.0, w: 8.4, h: 2.5, fontSize: 24, italic: true, color: colors.title, fontFace: 'Georgia', valign: 'middle' });
+        pSlide.addShape(pptx.ShapeType.rect, { x: 0.3, y: 0.8, w: 0.08, h: 3.5, fill: { color: colors.accent }, line: { type: 'none' } });
+        pSlide.addText(`\u201c${slide.content.quote ?? ''}\u201d`, { x: 0.6, y: 1.0, w: 8.6, h: 2.6, fontSize: 24, italic: true, color: colors.title, fontFace: 'Georgia', valign: 'middle', wrap: true });
         if (slide.content.attribution) {
-          pSlide.addText(`${slide.content.attribution}`, { x: 0.6, y: 3.7, w: 8.4, h: 0.5, fontSize: 16, color: colors.muted, fontFace: 'Calibri' });
+          pSlide.addText(`\u2014 ${slide.content.attribution}`, { x: 0.6, y: 3.75, w: 8.6, h: 0.5, fontSize: 16, color: colors.muted, fontFace: font });
         }
       } else if (slide.layout === 'stats') {
-        pSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.08, fill: { color: colors.accent }, line: { color: colors.accent } });
-        pSlide.addText(slide.content.title, { x: 0.5, y: 0.2, w: 9.0, h: 0.8, fontSize: 28, bold: true, color: colors.title, fontFace: 'Calibri' });
+        pSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.08, fill: { color: colors.accent }, line: { type: 'none' } });
+        pSlide.addText(slide.content.title, { x: 0.5, y: 0.2, w: 9.0, h: 0.8, fontSize: 28, bold: true, color: colors.title, fontFace: font });
+        pSlide.addShape(pptx.ShapeType.rect, { x: 0.5, y: 1.05, w: 1.2, h: 0.04, fill: { color: colors.accent }, line: { type: 'none' } });
         const stats = slide.content.stats ?? [];
         const n = Math.min(stats.length, 4);
         const cellW = 10 / (n || 1);
         stats.slice(0, n).forEach((stat, i) => {
-          pSlide.addText(stat.value, { x: i * cellW, y: 1.8, w: cellW, h: 1.0, fontSize: 36, bold: true, color: colors.accent, align: 'center', fontFace: 'Calibri' });
-          pSlide.addText(stat.label, { x: i * cellW, y: 2.9, w: cellW, h: 0.6, fontSize: 14, color: colors.muted, align: 'center', fontFace: 'Calibri' });
+          const x = i * cellW + 0.15;
+          pSlide.addShape(pptx.ShapeType.rect, { x: x + 0.1, y: 1.5, w: cellW - 0.3, h: 2.2, fill: { color: colors.bg2, transparency: 20 }, line: { color: colors.accent, transparency: 70, pt: 1 } });
+          pSlide.addText(stat.value, { x, y: 1.7, w: cellW - 0.3, h: 1.0, fontSize: 36, bold: true, color: colors.accent, align: 'center', fontFace: font });
+          pSlide.addText(stat.label, { x, y: 2.75, w: cellW - 0.3, h: 0.7, fontSize: 14, color: colors.muted, align: 'center', fontFace: font, wrap: true });
+        });
+      } else if (slide.layout === 'two-column') {
+        pSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.08, fill: { color: colors.accent }, line: { type: 'none' } });
+        pSlide.addText(slide.content.title, { x: 0.5, y: 0.2, w: 9.0, h: 0.8, fontSize: 28, bold: true, color: colors.title, fontFace: font });
+        pSlide.addShape(pptx.ShapeType.rect, { x: 0.5, y: 1.05, w: 1.2, h: 0.04, fill: { color: colors.accent }, line: { type: 'none' } });
+        // Subtle divider
+        pSlide.addShape(pptx.ShapeType.rect, { x: 4.9, y: 1.2, w: 0.04, h: 3.2, fill: { color: colors.accent, transparency: 70 }, line: { type: 'none' } });
+        const left = slide.content.leftColumn ?? [];
+        const right = slide.content.rightColumn ?? [];
+        left.forEach((item, i) => {
+          pSlide.addText(`\u2022  ${item}`, { x: 0.4, y: 1.3 + i * 0.58, w: 4.2, h: 0.52, fontSize: 17, color: colors.text, fontFace: font, wrap: true });
+        });
+        right.forEach((item, i) => {
+          pSlide.addText(`\u2022  ${item}`, { x: 5.2, y: 1.3 + i * 0.58, w: 4.2, h: 0.52, fontSize: 17, color: colors.text, fontFace: font, wrap: true });
         });
       } else {
-        pSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.08, fill: { color: colors.accent }, line: { color: colors.accent } });
-        pSlide.addText(slide.content.title, { x: 0.5, y: 0.2, w: 9.0, h: 0.8, fontSize: 28, bold: true, color: colors.title, fontFace: 'Calibri' });
+        // bullets + content layouts
+        pSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.08, fill: { color: colors.accent }, line: { type: 'none' } });
+        pSlide.addText(slide.content.title, { x: 0.5, y: 0.2, w: 9.0, h: 0.8, fontSize: 28, bold: true, color: colors.title, fontFace: font });
+        pSlide.addShape(pptx.ShapeType.rect, { x: 0.5, y: 1.05, w: 1.2, h: 0.04, fill: { color: colors.accent }, line: { type: 'none' } });
+        if (slide.content.body) {
+          pSlide.addText(slide.content.body, { x: 0.6, y: 1.2, w: 8.8, h: 3.2, fontSize: 18, color: colors.text, fontFace: font, wrap: true, valign: 'top' });
+        }
         const bullets = slide.content.bullets ?? [];
         bullets.forEach((b, i) => {
-          pSlide.addText(`• ${b}`, { x: 0.6, y: 1.3 + i * 0.55, w: 8.8, h: 0.5, fontSize: 18, color: colors.text, fontFace: 'Calibri' });
+          pSlide.addText(`\u2022  ${b}`, { x: 0.6, y: 1.3 + i * 0.58, w: 8.8, h: 0.52, fontSize: 18, color: colors.text, fontFace: font, wrap: true });
         });
       }
     }
@@ -214,6 +255,30 @@ async function tryPPTXExport(presentation: Presentation): Promise<boolean> {
     console.warn('pptxgenjs unavailable, falling back to HTML export:', e);
     return false;
   }
+}
+
+export function importFromHTML(file: File): Promise<Presentation> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const match = text.match(/<!-- wingman-data: ([\s\S]+?) -->/);
+      if (!match) return reject(new Error('No Wingman data found in this file.'));
+      try {
+        const presentation = JSON.parse(match[1].replace(/--\\>/g, '-->')) as Presentation;
+        resolve(presentation);
+      } catch {
+        reject(new Error('Could not parse Wingman data.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Could not read file.'));
+    reader.readAsText(file);
+  });
+}
+
+export function exportToHTML(presentation: Presentation): void {
+  const html = generateHTMLPresentation(presentation);
+  downloadBlob(html, `${presentation.title.replace(/[^a-z0-9]/gi, '_')}.html`, 'text/html');
 }
 
 export async function exportToPPTX(presentation: Presentation): Promise<void> {
