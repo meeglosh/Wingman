@@ -10,7 +10,8 @@ import { usePresentations } from '../context/PresentationContext';
 import { getTheme, SLIDE_THEMES } from '../utils/themes';
 import { exportToPPTX, exportToHTML } from '../utils/exportUtils';
 import { SlideThumbnail } from '../components/SlideThumbnail';
-import { ScaledSlide } from '../components/SlideRenderer';
+import { ScaledSlide, SLIDE_W, SLIDE_H } from '../components/SlideRenderer';
+import { ImageEditor, useImagePaste } from '../components/ImageEditor';
 import type { Presentation, Slide, SlideLayout, SlideTheme } from '../types/presentation';
 
 // ─── Presentation fonts ───────────────────────────────────────────────────────
@@ -456,6 +457,17 @@ export default function WorkspaceEditor() {
   const theme = getTheme(presentation.themeId);
   const selectedSlide = presentation.slides[selectedIdx];
 
+  const handleImagesChange = (images: typeof selectedSlide.content.images) => {
+    if (!selectedSlide) return;
+    handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, images } });
+  };
+
+  useImagePaste(img => {
+    if (!selectedSlide) return;
+    const images = [...(selectedSlide.content.images ?? []), img];
+    handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, images } });
+  });
+
   const handleSlideChange = (updatedSlide: Slide) => {
     const updated = updateSlide(presentation, updatedSlide);
     setPresentation(updated);
@@ -798,6 +810,16 @@ export default function WorkspaceEditor() {
                     containerHeight={Math.min(containerSize.h - 80, 563)}
                     fontFamily={presentation.fontFamily}
                     onEdit={patch => handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, ...patch } })}
+                    imageOverlay={
+                      <ImageEditor
+                        images={selectedSlide.content.images ?? []}
+                        onChange={handleImagesChange}
+                        scale={Math.min(
+                          Math.min(containerSize.w - 64, 1000) / SLIDE_W,
+                          Math.min(containerSize.h - 80, 563) / SLIDE_H,
+                        )}
+                      />
+                    }
                   />
                 </div>
                 <p style={{ color: '#475569', fontSize: 11 }}>

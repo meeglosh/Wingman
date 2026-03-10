@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import type { Slide, SlideContent, SlideTheme } from '../types/presentation';
+import type { Slide, SlideContent, SlideImage, SlideTheme } from '../types/presentation';
 
 interface SlideRendererProps {
   slide: Slide;
@@ -110,6 +110,24 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
           );
         })()}
       </div>
+
+      {/* Positioned images — hidden in editor (ImageEditor overlay handles them there) */}
+      {!onEdit && (content.images ?? []).map(img => (
+        <img
+          key={img.id}
+          src={img.url}
+          alt=""
+          style={{
+            position: 'absolute',
+            left: img.x, top: img.y,
+            width: img.width, height: img.height,
+            objectFit: 'contain',
+            zIndex: 4,
+            pointerEvents: 'none',
+            borderRadius: 4,
+          }}
+        />
+      ))}
 
       {/* Logo watermark */}
       {theme.logoUrl && (
@@ -340,9 +358,10 @@ interface ScaledSlideProps {
   liveTranscript?: string;
   fontFamily?: string;
   onEdit?: (patch: Partial<SlideContent>) => void;
+  imageOverlay?: React.ReactNode;
 }
 
-export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isActive, liveTranscript, fontFamily, onEdit }: ScaledSlideProps) {
+export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isActive, liveTranscript, fontFamily, onEdit, imageOverlay }: ScaledSlideProps) {
   const scale = Math.min(containerWidth / SLIDE_W, containerHeight / SLIDE_H);
   const renderedW = SLIDE_W * scale;
   const renderedH = SLIDE_H * scale;
@@ -359,9 +378,15 @@ export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isA
           fontFamily={fontFamily}
           onEdit={onEdit}
         />
+        {/* Image drag/resize overlay — rendered in screen space over the scaled slide */}
+        {imageOverlay}
       </div>
     </div>
   );
 }
 
+export { SLIDE_W, SLIDE_H };
+
+
 export const SLIDE_ASPECT = { width: SLIDE_W, height: SLIDE_H };
+
