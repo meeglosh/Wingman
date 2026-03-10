@@ -103,13 +103,15 @@ export const SLIDE_THEMES: SlideTheme[] = [
   {
     id: 'terminal',
     name: 'Terminal',
-    background: 'linear-gradient(135deg, #0d0d0d 0%, #141414 100%)',
-    titleColor: '#f0f0f0',
-    textColor: '#c8c8c8',
-    accentColor: '#66b3ff',
-    mutedColor: '#a0a0a0',
-    bulletColor: '#66b3ff',
-    borderColor: 'rgba(102,179,255,0.2)',
+    background: 'linear-gradient(135deg, #ffffff 0%, #f8f8f8 100%)',
+    titleColor: '#141414',
+    textColor: '#3c3c3c',
+    accentColor: '#0066cc',
+    mutedColor: '#787878',
+    bulletColor: '#0066cc',
+    borderColor: 'rgba(0,102,204,0.2)',
+    logoUrl: '/og-image.png',
+    logoFilter: 'none',
   },
 ];
 

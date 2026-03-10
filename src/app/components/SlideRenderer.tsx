@@ -72,6 +72,25 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
         })()}
       </div>
 
+      {/* Logo watermark */}
+      {theme.logoUrl && (
+        <div style={{
+          position: 'absolute', bottom: 24, right: 36, zIndex: 3,
+          opacity: 0.8, pointerEvents: 'none',
+        }}>
+          <img
+            src={theme.logoUrl}
+            alt="logo"
+            style={{
+              height: 52,
+              width: 'auto',
+              display: 'block',
+              filter: theme.logoFilter ?? 'none',
+            }}
+          />
+        </div>
+      )}
+
       {/* Live transcript ticker */}
       {isActive && liveTranscript && (
         <div style={{

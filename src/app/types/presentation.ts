@@ -60,4 +60,6 @@ export interface SlideTheme {
   mutedColor: string;
   bulletColor: string;
   borderColor: string;
+  logoUrl?: string;
+  logoFilter?: string;
 }
