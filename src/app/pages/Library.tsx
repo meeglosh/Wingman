@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Mic, Edit3, Play, Trash2, Clock, Layers, ArrowLeft } from 'lucide-react';
+import { Plus, Mic, Edit3, Play, Trash2, Clock, Layers, ArrowLeft, Upload } from 'lucide-react';
 import { usePresentations } from '../context/PresentationContext';
 import { SLIDE_THEMES } from '../utils/themes';
+import { importFromHTML } from '../utils/exportUtils';
+import { ScaledSlide } from '../components/SlideRenderer';
 import type { Presentation } from '../types/presentation';
 
 function formatDate(ts: number) {
@@ -62,6 +64,16 @@ function PresentationCard({
       >
         {firstBg ? (
           <img src={firstBg} alt={presentation.title} className="w-full h-full object-cover" style={{ filter: 'brightness(0.65)' }} />
+        ) : presentation.slides[0] ? (
+          <div style={{ width: '100%', height: '100%', pointerEvents: 'none', overflow: 'hidden' }}>
+            <ScaledSlide
+              slide={presentation.slides[0]}
+              theme={theme}
+              containerWidth={360}
+              containerHeight={180}
+              fontFamily={presentation.fontFamily}
+            />
+          </div>
         ) : (
           <div style={{ width: '100%', height: '100%', background: theme.background }} />
         )}
@@ -144,7 +156,24 @@ function PresentationCard({
 
 export default function Library() {
   const navigate = useNavigate();
-  const { presentations, removePresentation } = usePresentations();
+  const { presentations, removePresentation, saveOrUpdate } = usePresentations();
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const presentation = await importFromHTML(file);
+      // Give it a fresh ID so it doesn't collide with an existing one
+      const now = Date.now();
+      const imported = { ...presentation, id: `pres_${now}_${Math.random().toString(36).slice(2, 8)}`, updatedAt: now };
+      saveOrUpdate(imported);
+      navigate(`/edit/${imported.id}`);
+    } catch (err: any) {
+      alert(err.message ?? 'Import failed.');
+    }
+    e.target.value = '';
+  };
 
   return (
     <div
@@ -183,14 +212,25 @@ export default function Library() {
             </div>
           </div>
 
-          <button
-            onClick={() => navigate('/')}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', boxShadow: '0 4px 16px rgba(124,58,237,0.3)' }}
-          >
-            <Plus size={15} />
-            New Presentation
-          </button>
+          <div className="flex items-center gap-2">
+            <input ref={fileInputRef} type="file" accept=".html" onChange={handleImport} className="hidden" />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors"
+              style={{ background: 'rgba(255,255,255,0.06)', color: '#94A3B8', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              <Upload size={15} />
+              Import HTML
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white"
+              style={{ background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', boxShadow: '0 4px 16px rgba(124,58,237,0.3)' }}
+            >
+              <Plus size={15} />
+              New Presentation
+            </button>
+          </div>
         </div>
       </header>
 

@@ -63,6 +63,13 @@ export const SLIDE_FONTS: SlideFont[] = [
     style: 'Editorial',
     serif: true,
   },
+  {
+    id: 'jetbrains-mono',
+    name: 'JetBrains Mono',
+    family: '"JetBrains Mono", "Fira Code", monospace',
+    style: 'Mono',
+    serif: false,
+  },
 ];
 
 export const DEFAULT_FONT_ID = 'space-grotesk';

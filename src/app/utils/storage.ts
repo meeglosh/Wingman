@@ -2,6 +2,37 @@ import type { Presentation, Slide } from '../types/presentation';
 
 const STORAGE_KEY = 'wingman_presentations';
 
+// ── Server sync (fire-and-forget) ─────────────────────────────────────────────
+
+function pushToServer(presentations: Presentation[]): void {
+  fetch('/api/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ presentations }),
+  }).catch(() => {});
+}
+
+/** Fetch from server; if data differs, update localStorage and return true. */
+export async function syncFromServer(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/presentations');
+    if (!res.ok) return false;
+    const serverData: Presentation[] = await res.json();
+
+    const localData = loadPresentations();
+    const serverSig = serverData.map(p => `${p.id}:${p.updatedAt}`).sort().join(',');
+    const localSig = localData.map(p => `${p.id}:${p.updatedAt}`).sort().join(',');
+
+    if (serverSig !== localSig) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serverData));
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function loadPresentations(): Presentation[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -22,11 +53,13 @@ export function savePresentation(presentation: Presentation): void {
     all.unshift(updated);
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  pushToServer(all);
 }
 
 export function deletePresentation(id: string): void {
   const all = loadPresentations().filter(p => p.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  pushToServer(all);
 }
 
 export function getPresentation(id: string): Presentation | null {

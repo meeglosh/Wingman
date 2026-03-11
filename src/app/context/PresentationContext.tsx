@@ -9,6 +9,7 @@ import {
   deleteSlideFromPresentation,
   reorderSlides,
   generateSlideId,
+  syncFromServer,
 } from '../utils/storage';
 
 interface PresentationContextValue {
@@ -32,7 +33,17 @@ export function PresentationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   useEffect(() => {
+    // Initial load from localStorage, then sync from server
     refreshPresentations();
+    syncFromServer().then(updated => { if (updated) refreshPresentations(); });
+
+    // Poll server every 4s so CLI/agent changes appear in the UI
+    const interval = setInterval(async () => {
+      const updated = await syncFromServer();
+      if (updated) refreshPresentations();
+    }, 4000);
+
+    return () => clearInterval(interval);
   }, [refreshPresentations]);
 
   const saveOrUpdate = useCallback((presentation: Presentation) => {

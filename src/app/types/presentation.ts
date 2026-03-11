@@ -5,6 +5,15 @@ export interface StatItem {
   label: string;
 }
 
+export interface SlideImage {
+  id: string;
+  url: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface SlideContent {
   title: string;
   subtitle?: string;
@@ -15,6 +24,7 @@ export interface SlideContent {
   stats?: StatItem[];
   leftColumn?: string[];
   rightColumn?: string[];
+  images?: SlideImage[];
 }
 
 export interface Slide {
@@ -34,6 +44,7 @@ export interface Presentation {
   slides: Slide[];
   themeId: string;
   fontFamily?: string;
+  logoImage?: { x: number; y: number; width: number; height: number };
   createdAt: number;
   updatedAt: number;
 }
@@ -60,4 +71,6 @@ export interface SlideTheme {
   mutedColor: string;
   bulletColor: string;
   borderColor: string;
+  logoUrl?: string;
+  logoFilter?: string;
 }
