@@ -82,6 +82,7 @@ wingman start      # start the server
 | neon       | Near-black with electric cyan        |
 | rose       | Deep dark with hot pink accents      |
 | paper      | Warm off-white, terracotta accent    |
+| terminal   | Dark green-on-black, has logo        |
 
 To add a theme: edit `src/app/utils/themes.ts` — it's just an object with 7 color fields.
 
@@ -99,19 +100,31 @@ All presentations are stored in `data/presentations.json`. No database. The file
 
 ## Adding an AI agent (Claude Code)
 
-Point Claude Code at this repo. It can drive the full presentation lifecycle:
+Point Claude Code at this repo. It can drive the full presentation lifecycle.
+
+**Start every session by listing existing presentations** — `data/presentations.json` is gitignored so IDs aren't in the repo:
 
 ```bash
-# Create a deck
-node bin/wingman.js create "The Future of Agents" --theme midnight
+node bin/wingman.js list
+```
+
+Then build or iterate:
+
+```bash
+# Create a new deck
+node bin/wingman.js create "My Talk" --theme terminal
 
 # Add slides
 node bin/wingman.js add <id> '{"layout":"bullets","content":{"title":"Key Points","bullets":["a","b","c"]}}'
 
-# Iterate
+# Inspect and iterate
 node bin/wingman.js slides <id>
 node bin/wingman.js update <id> <slide-id> '{"layout":"stats","content":{...}}'
 node bin/wingman.js open <id>
 ```
 
 The browser reflects changes within 4 seconds automatically.
+
+### Logo positioning
+
+Logo position is stored per-presentation as `logoImage` (in 1280×720 slide space). The CLI `set` command doesn't expose it — set it once via the browser editor (Logo button in toolbar), then it persists for all future sessions.
