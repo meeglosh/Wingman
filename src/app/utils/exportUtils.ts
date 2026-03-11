@@ -204,7 +204,8 @@ ${googleFontLink}
 </html>`;
 }
 
-function escHtml(str: string): string {
+function escHtml(str: string | null | undefined): string {
+  if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
@@ -212,11 +213,14 @@ function downloadBlob(content: string, filename: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
+  a.style.cssText = 'position:fixed;top:-200px;left:-200px;opacity:0;';
   a.href = url;
   a.download = filename;
+  a.rel = 'noopener';
   document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 1000);
+  // dispatchEvent is more reliable than .click() across browsers (esp. Safari)
+  a.dispatchEvent(new MouseEvent('click', { bubbles: false, cancelable: true, view: window }));
+  setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 2000);
 }
 
 // ─── Try pptxgenjs, fall back to HTML ────────────────────────────────────────

@@ -326,6 +326,7 @@ function PropertiesPanel({ slide, theme, onChange }: {
 // ─── Export Menu ──────────────────────────────────────────────────────────────
 function ExportDropdown({ presentation, onClose }: { presentation: Presentation; onClose: () => void }) {
   const [downloading, setDownloading] = useState(false);
+  const [htmlDone, setHtmlDone] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const handleDownload = async () => {
@@ -336,8 +337,14 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
   };
 
   const handleDownloadHTML = () => {
-    exportToHTML(presentation);
-    onClose();
+    try {
+      exportToHTML(presentation);
+    } catch (e) {
+      alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    setHtmlDone(true);
+    setTimeout(() => { setHtmlDone(false); onClose(); }, 1400);
   };
 
   const handleCopyLink = async () => {
@@ -383,14 +390,18 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
       {/* Download .html */}
       <button
         onClick={handleDownloadHTML}
+        disabled={htmlDone}
         className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-white/5"
         style={{ color: '#E2E8F0' }}
       >
-        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(14,165,233,0.15)' }}>
-          <Download size={14} style={{ color: '#38BDF8' }} />
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: htmlDone ? 'rgba(16,185,129,0.15)' : 'rgba(14,165,233,0.15)' }}>
+          {htmlDone
+            ? <Check size={14} style={{ color: '#34D399' }} />
+            : <Download size={14} style={{ color: '#38BDF8' }} />
+          }
         </div>
         <div>
-          <p className="font-medium" style={{ fontSize: 13 }}>Download file</p>
+          <p className="font-medium" style={{ fontSize: 13 }}>{htmlDone ? 'Saved to Downloads!' : 'Download file'}</p>
           <p style={{ color: '#64748B', fontSize: 11 }}>Standalone HTML</p>
         </div>
       </button>
