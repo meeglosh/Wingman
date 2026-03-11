@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, Play, Download, Plus, Trash2, Copy,
-  Type, BarChart2, Quote, Columns, List, Layout, Check, X, Pencil, GripVertical
+  Type, BarChart2, Quote, Columns, List, Layout, Check, X, Pencil, GripVertical, Image
 } from 'lucide-react';
 import {
   DndContext, closestCenter, PointerSensor, KeyboardSensor,
@@ -21,7 +21,12 @@ import { exportToPPTX, exportToHTML } from '../utils/exportUtils';
 import { SlideThumbnail } from '../components/SlideThumbnail';
 import { ScaledSlide, SLIDE_W, SLIDE_H } from '../components/SlideRenderer';
 import { ImageEditor, useImagePaste } from '../components/ImageEditor';
+import { Rnd } from 'react-rnd';
 import type { Presentation, Slide, SlideLayout, SlideTheme } from '../types/presentation';
+
+// Default logo placement — matches the CSS fallback in SlideRenderer
+// (bottom:24, right:36, height:52; og-image is 1200×630 so width≈99 at h=52)
+const DEFAULT_LOGO = { x: 1145, y: 644, width: 99, height: 52 };
 
 // ─── Presentation fonts ───────────────────────────────────────────────────────
 const PRESENTATION_FONTS: Array<{ name: string; family: string; category: 'sans' | 'display' | 'serif' }> = [
@@ -432,8 +437,9 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
 let slideClipboard: Slide | null = null;
 
 // ─── Sortable slide item ──────────────────────────────────────────────────────
-function SortableSlideItem({ slide, index, isSelected, onClick, onDelete, onDuplicate, theme }: {
+function SortableSlideItem({ slide, index, isSelected, onClick, onDelete, onDuplicate, theme, logoImage }: {
   slide: Slide; index: number; isSelected: boolean; theme: SlideTheme;
+  logoImage?: { x: number; y: number; width: number; height: number };
   onClick: () => void; onDelete: () => void; onDuplicate: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slide.id });
@@ -454,6 +460,7 @@ function SortableSlideItem({ slide, index, isSelected, onClick, onDelete, onDupl
         slide={slide} theme={theme} index={index}
         isSelected={isSelected} onClick={onClick}
         onDelete={onDelete} onDuplicate={onDuplicate}
+        logoImage={logoImage}
       />
     </div>
   );
@@ -474,6 +481,8 @@ export default function WorkspaceEditor() {
   const [titleDraft, setTitleDraft] = useState('');
   const [saved, setSaved] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [logoSelected, setLogoSelected] = useState(false);
+  const [logoEditMode, setLogoEditMode] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
   // Stable ref so useImagePaste (called unconditionally) can access current slide
   const addImageRef = useRef<((img: import('../types/presentation').SlideImage) => void) | null>(null);
@@ -562,6 +571,12 @@ export default function WorkspaceEditor() {
   const handleImagesChange = (images: typeof selectedSlide.content.images) => {
     if (!selectedSlide) return;
     handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, images } });
+  };
+
+  const handleLogoUpdate = (logoImage: Presentation['logoImage']) => {
+    const updated = { ...presentation, logoImage, updatedAt: Date.now() };
+    setPresentation(updated);
+    saveOrUpdate(updated);
   };
 
   // Keep ref current so the unconditional hook above can call it
@@ -805,6 +820,22 @@ export default function WorkspaceEditor() {
           </AnimatePresence>
         </div>
 
+        {/* Logo position button — only shown when theme has a logo */}
+        {theme.logoUrl && (
+          <button
+            onClick={() => { setLogoEditMode(v => !v); setLogoSelected(true); }}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium"
+            style={{
+              background: logoEditMode ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.07)',
+              color: logoEditMode ? '#818CF8' : '#94A3B8',
+              border: logoEditMode ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.1)',
+            }}
+          >
+            <Image size={14} />
+            {logoEditMode ? 'Done' : 'Logo'}
+          </button>
+        )}
+
         {/* Present */}
         <button
           onClick={() => navigate(`/playback/${presentation.id}`)}
@@ -872,6 +903,7 @@ export default function WorkspaceEditor() {
                       key={slide.id}
                       slide={slide}
                       theme={theme}
+                      logoImage={presentation.logoImage}
                       index={i}
                       isSelected={i === selectedIdx}
                       onClick={() => setSelectedIdx(i)}
@@ -898,29 +930,135 @@ export default function WorkspaceEditor() {
                 className="flex flex-col items-center gap-4 w-full h-full justify-center"
                 style={{ padding: 32 }}
               >
-                <div className="rounded-lg overflow-hidden" style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.7)' }}>
-                  <ScaledSlide
-                    slide={selectedSlide}
-                    theme={theme}
-                    containerWidth={Math.min(containerSize.w - 64, 1000)}
-                    containerHeight={Math.min(containerSize.h - 80, 563)}
-                    fontFamily={presentation.fontFamily}
-                    onEdit={patch => handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, ...patch } })}
-                    imageOverlay={
-                      <ImageEditor
-                        images={selectedSlide.content.images ?? []}
-                        onChange={handleImagesChange}
-                        scale={Math.min(
-                          Math.min(containerSize.w - 64, 1000) / SLIDE_W,
-                          Math.min(containerSize.h - 80, 563) / SLIDE_H,
-                        )}
+                {(() => {
+                  const scale = Math.min(
+                    Math.min(containerSize.w - 64, 1000) / SLIDE_W,
+                    Math.min(containerSize.h - 80, 563) / SLIDE_H,
+                  );
+                  const logo = presentation.logoImage ?? DEFAULT_LOGO;
+
+                  // Shared logo Rnd — same in both template and slide mode
+                  const logoRnd = theme.logoUrl ? (
+                    <Rnd
+                      position={{ x: logo.x * scale, y: logo.y * scale }}
+                      size={{ width: logo.width * scale, height: logo.height * scale }}
+                      minWidth={20 * scale} minHeight={20 * scale}
+                      bounds="parent"
+                      lockAspectRatio
+                      onMouseDown={e => { e.stopPropagation(); setLogoSelected(true); }}
+                      onDragStop={(_, d) => handleLogoUpdate({ ...logo, x: Math.round(d.x / scale), y: Math.round(d.y / scale) })}
+                      onResizeStop={(_, __, ref, ___, pos) => handleLogoUpdate({
+                        x: Math.round(pos.x / scale), y: Math.round(pos.y / scale),
+                        width: Math.round(parseInt(ref.style.width) / scale),
+                        height: Math.round(parseInt(ref.style.height) / scale),
+                      })}
+                      style={{
+                        outline: logoSelected ? '2px solid #0066cc' : '2px solid transparent',
+                        borderRadius: 4, cursor: 'move', pointerEvents: 'auto', opacity: 0.8,
+                      }}
+                    >
+                      <img
+                        src={theme.logoUrl}
+                        alt=""
+                        draggable={false}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain', filter: theme.logoFilter ?? 'none', display: 'block', userSelect: 'none' }}
                       />
-                    }
-                  />
-                </div>
-                <p style={{ color: '#475569', fontSize: 11 }}>
-                  Slide {selectedIdx + 1} of {presentation.slides.length}  ·  Layout: {selectedSlide.layout}  ·  Click any field to edit
-                </p>
+                      {logoSelected && (() => {
+                        const w = logo.width, h = logo.height;
+                        const pad = 36;
+                        const snapPositions = [
+                          { label: '↖', x: pad, y: pad },
+                          { label: '↑', x: Math.round((SLIDE_W - w) / 2), y: pad },
+                          { label: '↗', x: SLIDE_W - pad - w, y: pad },
+                          { label: '←', x: pad, y: Math.round((SLIDE_H - h) / 2) },
+                          { label: '·', x: Math.round((SLIDE_W - w) / 2), y: Math.round((SLIDE_H - h) / 2) },
+                          { label: '→', x: SLIDE_W - pad - w, y: Math.round((SLIDE_H - h) / 2) },
+                          { label: '↙', x: pad, y: SLIDE_H - pad - h },
+                          { label: '↓', x: Math.round((SLIDE_W - w) / 2), y: SLIDE_H - pad - h },
+                          { label: '↘', x: SLIDE_W - pad - w, y: SLIDE_H - pad - h },
+                        ];
+                        return (
+                          <div
+                            onMouseDown={e => e.stopPropagation()}
+                            style={{
+                              position: 'absolute', bottom: '100%', left: '50%',
+                              transform: 'translateX(-50%)',
+                              marginBottom: 6,
+                              background: 'rgba(13,14,20,0.95)',
+                              border: '1px solid rgba(255,255,255,0.12)',
+                              borderRadius: 8, padding: 4,
+                              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 2,
+                              pointerEvents: 'auto', zIndex: 50,
+                            }}
+                          >
+                            {snapPositions.map(({ label, x, y }) => (
+                              <button
+                                key={label}
+                                onClick={e => { e.stopPropagation(); handleLogoUpdate({ ...logo, x, y }); }}
+                                style={{
+                                  width: 22, height: 22, border: 'none', borderRadius: 4,
+                                  background: 'rgba(255,255,255,0.06)', color: '#94A3B8',
+                                  fontSize: 12, cursor: 'pointer', display: 'flex',
+                                  alignItems: 'center', justifyContent: 'center',
+                                }}
+                                title={`Snap to ${label}`}
+                              >{label}</button>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </Rnd>
+                  ) : null;
+
+                  if (logoEditMode) {
+                    // Template view: just the theme background + logo, no slide content
+                    return (<>
+                      <div
+                        className="rounded-lg overflow-hidden"
+                        style={{
+                          width: SLIDE_W * scale, height: SLIDE_H * scale,
+                          background: theme.background,
+                          position: 'relative',
+                          boxShadow: '0 24px 80px rgba(0,0,0,0.7)',
+                        }}
+                        onClick={() => setLogoSelected(false)}
+                      >
+                        <div style={{ position: 'absolute', inset: 0, zIndex: 10, pointerEvents: 'none' }}>
+                          {logoRnd}
+                        </div>
+                      </div>
+                      <p style={{ color: '#818CF8', fontSize: 11 }}>
+                        Drag or snap the logo  ·  Position applies to all slides  ·  Click <strong>Done</strong> when finished
+                      </p>
+                    </>);
+                  }
+
+                  return (<>
+                    <div className="rounded-lg overflow-hidden" style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.7)' }}
+                      onClick={() => setLogoSelected(false)}>
+                      <ScaledSlide
+                        slide={selectedSlide}
+                        theme={theme}
+                        containerWidth={Math.min(containerSize.w - 64, 1000)}
+                        containerHeight={Math.min(containerSize.h - 80, 563)}
+                        fontFamily={presentation.fontFamily}
+                        onEdit={patch => handleSlideChange({ ...selectedSlide, content: { ...selectedSlide.content, ...patch } })}
+                        logoImage={presentation.logoImage}
+                        imageOverlay={<>
+                          <ImageEditor
+                            images={selectedSlide.content.images ?? []}
+                            onChange={handleImagesChange}
+                            scale={scale}
+                          />
+                          {logoRnd}
+                        </>}
+                      />
+                    </div>
+                    <p style={{ color: '#475569', fontSize: 11 }}>
+                      Slide {selectedIdx + 1} of {presentation.slides.length}  ·  Layout: {selectedSlide.layout}  ·  Click any field to edit
+                    </p>
+                  </>);
+                })()}
               </motion.div>
             </AnimatePresence>
           ) : presentation.slides.length === 0 ? (

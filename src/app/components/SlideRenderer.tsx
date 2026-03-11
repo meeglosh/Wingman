@@ -9,6 +9,7 @@ interface SlideRendererProps {
   liveTranscript?: string;
   fontFamily?: string;
   onEdit?: (patch: Partial<SlideContent>) => void;
+  logoImage?: { x: number; y: number; width: number; height: number };
 }
 
 const SLIDE_W = 1280;
@@ -54,7 +55,7 @@ function InlineText({
   );
 }
 
-export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscript, fontFamily, onEdit }: SlideRendererProps) {
+export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscript, fontFamily, onEdit, logoImage }: SlideRendererProps) {
   const { layout, content } = slide;
 
   const resolvedFont = fontFamily ?? '"Space Grotesk", "Inter", "Segoe UI", system-ui, sans-serif';
@@ -129,23 +130,25 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
         />
       ))}
 
-      {/* Logo watermark */}
-      {theme.logoUrl && (
-        <div style={{
-          position: 'absolute', bottom: 24, right: 36, zIndex: 3,
-          opacity: 0.8, pointerEvents: 'none',
-        }}>
+      {/* Logo watermark — suppressed in edit mode (editor renders its own draggable overlay) */}
+      {theme.logoUrl && !onEdit && (
+        logoImage ? (
           <img
             src={theme.logoUrl}
-            alt="logo"
+            alt=""
             style={{
-              height: 52,
-              width: 'auto',
-              display: 'block',
-              filter: theme.logoFilter ?? 'none',
+              position: 'absolute',
+              left: logoImage.x, top: logoImage.y,
+              width: logoImage.width, height: logoImage.height,
+              objectFit: 'contain', opacity: 0.8,
+              pointerEvents: 'none', filter: theme.logoFilter ?? 'none', zIndex: 3,
             }}
           />
-        </div>
+        ) : (
+          <div style={{ position: 'absolute', bottom: 24, right: 36, zIndex: 3, opacity: 0.8, pointerEvents: 'none' }}>
+            <img src={theme.logoUrl} alt="" style={{ height: 52, width: 'auto', display: 'block', filter: theme.logoFilter ?? 'none' }} />
+          </div>
+        )
       )}
 
       {/* Live transcript ticker */}
@@ -385,9 +388,10 @@ interface ScaledSlideProps {
   fontFamily?: string;
   onEdit?: (patch: Partial<SlideContent>) => void;
   imageOverlay?: React.ReactNode;
+  logoImage?: { x: number; y: number; width: number; height: number };
 }
 
-export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isActive, liveTranscript, fontFamily, onEdit, imageOverlay }: ScaledSlideProps) {
+export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isActive, liveTranscript, fontFamily, onEdit, imageOverlay, logoImage }: ScaledSlideProps) {
   const scale = Math.min(containerWidth / SLIDE_W, containerHeight / SLIDE_H);
   const renderedW = SLIDE_W * scale;
   const renderedH = SLIDE_H * scale;
@@ -403,6 +407,7 @@ export function ScaledSlide({ slide, theme, containerWidth, containerHeight, isA
           liveTranscript={liveTranscript}
           fontFamily={fontFamily}
           onEdit={onEdit}
+          logoImage={logoImage}
         />
         {/* Image drag/resize overlay — rendered in screen space over the scaled slide */}
         {imageOverlay}

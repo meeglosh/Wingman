@@ -44,6 +44,7 @@ export interface Presentation {
   slides: Slide[];
   themeId: string;
   fontFamily?: string;
+  logoImage?: { x: number; y: number; width: number; height: number };
   createdAt: number;
   updatedAt: number;
 }

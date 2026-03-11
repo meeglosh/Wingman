@@ -16,9 +16,10 @@ interface SlideThumbnailProps {
   onClick?: () => void;
   onDelete?: () => void;
   onDuplicate?: () => void;
+  logoImage?: { x: number; y: number; width: number; height: number };
 }
 
-export function SlideThumbnail({ slide, theme, index, isSelected, onClick, onDelete, onDuplicate }: SlideThumbnailProps) {
+export function SlideThumbnail({ slide, theme, index, isSelected, onClick, onDelete, onDuplicate, logoImage }: SlideThumbnailProps) {
   return (
     <div
       onClick={onClick}
@@ -54,7 +55,7 @@ export function SlideThumbnail({ slide, theme, index, isSelected, onClick, onDel
           top: 0,
           left: 0,
         }}>
-          <SlideRenderer slide={slide} theme={theme} scale={1} />
+          <SlideRenderer slide={slide} theme={theme} scale={1} logoImage={logoImage} />
         </div>
 
         {/* Hover overlay — note: NO stopPropagation here so clicking the overlay

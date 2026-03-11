@@ -60,8 +60,11 @@ async function generateHTMLPresentation(presentation: Presentation): Promise<str
   // Logo — fetch and embed as base64 so the HTML is self-contained
   const logoSrc = theme.logoUrl ? await fetchAsDataUrl(theme.logoUrl) : null;
   const logoFilter = theme.logoFilter ?? 'none';
+  const logoImg = presentation.logoImage;
   const logoHTML = logoSrc
-    ? `<img src="${logoSrc}" alt="" style="position:absolute;bottom:24px;right:36px;height:52px;width:auto;opacity:0.8;filter:${logoFilter};pointer-events:none;" />`
+    ? logoImg
+      ? `<img src="${logoSrc}" alt="" style="position:absolute;left:${(logoImg.x / SLIDE_W_PX * 100).toFixed(2)}%;top:${(logoImg.y / SLIDE_H_PX * 100).toFixed(2)}%;width:${(logoImg.width / SLIDE_W_PX * 100).toFixed(2)}%;height:${(logoImg.height / SLIDE_H_PX * 100).toFixed(2)}%;object-fit:contain;opacity:0.8;filter:${logoFilter};pointer-events:none;" />`
+      : `<img src="${logoSrc}" alt="" style="position:absolute;bottom:24px;right:36px;height:52px;width:auto;opacity:0.8;filter:${logoFilter};pointer-events:none;" />`
     : '';
 
   // Font
