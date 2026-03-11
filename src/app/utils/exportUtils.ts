@@ -24,9 +24,32 @@ function colorsFromTheme(themeId: string): ExportColors {
   };
 }
 
-// ─── HTML export fallback ────────────────────────────────────────────────────
+// ─── HTML export ──────────────────────────────────────────────────────────────
+const SLIDE_W_PX = 1280;
+const SLIDE_H_PX = 720;
+
 function generateHTMLPresentation(presentation: Presentation): string {
   const theme = getTheme(presentation.themeId);
+  const c = colorsFromTheme(presentation.themeId);
+
+  // Detect light vs dark theme for adaptive UI chrome colors
+  const bgR = parseInt(c.bg.substring(0, 2), 16);
+  const bgG = parseInt(c.bg.substring(2, 4), 16);
+  const bgB = parseInt(c.bg.substring(4, 6), 16);
+  const isLight = (bgR + bgG + bgB) / 3 > 128;
+  const slideNumColor = isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.25)';
+  const statBoxBg = isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.05)';
+  const statBoxBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.1)';
+  const colDividerBg = isLight ? 'rgba(0,0,0,0.1)' : `rgba(${parseInt(c.accent.substring(0,2),16)},${parseInt(c.accent.substring(2,4),16)},${parseInt(c.accent.substring(4,6),16)},0.3)`;
+
+  // Font
+  const fontFamily = presentation.fontFamily
+    ? `'${presentation.fontFamily}', 'Segoe UI', system-ui, sans-serif`
+    : "'Segoe UI', Inter, system-ui, sans-serif";
+  const googleFontLink = presentation.fontFamily
+    ? `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=${encodeURIComponent(presentation.fontFamily)}:wght@400;600;700;800&display=swap" rel="stylesheet">`
+    : '';
 
   const slidesHTML = presentation.slides.map((slide, i) => {
     const content = slide.content;
@@ -57,19 +80,44 @@ function generateHTMLPresentation(presentation: Presentation): string {
         <div class="top-bar"></div>
         <div class="slide-header"><h2>${escHtml(content.title)}</h2><div class="header-line"></div></div>
         <div class="stats-grid">${statsHTML}</div>`;
-    } else {
-      const bulletsHTML = (content.bullets ?? []).map(b =>
-        `<div class="bullet-row"><div class="bullet-dot"></div><p>${escHtml(b)}</p></div>`
+    } else if (slide.layout === 'two-column') {
+      const leftHTML = (content.leftColumn ?? []).map(item =>
+        `<div class="bullet-row"><div class="bullet-dot"></div><p>${escHtml(item)}</p></div>`
+      ).join('');
+      const rightHTML = (content.rightColumn ?? []).map(item =>
+        `<div class="bullet-row"><div class="bullet-dot"></div><p>${escHtml(item)}</p></div>`
       ).join('');
       innerHTML = `
         <div class="top-bar"></div>
         <div class="slide-header"><h2>${escHtml(content.title)}</h2><div class="header-line"></div></div>
-        <div class="bullets">${bulletsHTML}</div>`;
+        <div class="two-col">
+          <div class="col">${leftHTML}</div>
+          <div class="col-divider"></div>
+          <div class="col">${rightHTML}</div>
+        </div>`;
+    } else {
+      // bullets + content layouts
+      const bulletsHTML = (content.bullets ?? []).map(b =>
+        `<div class="bullet-row"><div class="bullet-dot"></div><p>${escHtml(b)}</p></div>`
+      ).join('');
+      const bodyHTML = content.body
+        ? `<p class="body-text">${escHtml(content.body).replace(/\n/g, '<br>')}</p>`
+        : '';
+      innerHTML = `
+        <div class="top-bar"></div>
+        <div class="slide-header"><h2>${escHtml(content.title)}</h2><div class="header-line"></div></div>
+        <div class="bullets">${bodyHTML}${bulletsHTML}</div>`;
     }
 
+    // Pasted / dragged images — stored in slide coordinate space (1280×720), render as %
+    const imagesHTML = (content.images ?? []).map(img =>
+      `<img src="${escHtml(img.url)}" alt="" style="position:absolute;left:${(img.x / SLIDE_W_PX * 100).toFixed(2)}%;top:${(img.y / SLIDE_H_PX * 100).toFixed(2)}%;width:${(img.width / SLIDE_W_PX * 100).toFixed(2)}%;height:${(img.height / SLIDE_H_PX * 100).toFixed(2)}%;object-fit:contain;pointer-events:none;" />`
+    ).join('');
+
     return `
-      <div class="slide ${i === 0 ? 'active' : ''}" id="slide-${i}" data-index="${i}" style="background: ${theme.background}">
+      <div class="slide ${i === 0 ? 'active' : ''}" id="slide-${i}" data-index="${i}" style="background: ${theme.background}; position: relative;">
         ${innerHTML}
+        ${imagesHTML}
         <div class="slide-number">${i + 1} / ${presentation.slides.length}</div>
       </div>`;
   }).join('\n');
@@ -81,9 +129,10 @@ function generateHTMLPresentation(presentation: Presentation): string {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escHtml(presentation.title)}</title>
+${googleFontLink}
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #000; font-family: 'Segoe UI', Inter, system-ui, sans-serif; overflow: hidden; }
+  body { background: #000; font-family: ${fontFamily}; overflow: hidden; }
   .presentation { width: 100vw; height: 100vh; position: relative; }
   .slide {
     position: absolute; inset: 0;
@@ -91,29 +140,33 @@ function generateHTMLPresentation(presentation: Presentation): string {
     width: 100%; height: 100%;
   }
   .slide.active { display: flex; }
-  .top-bar, .title-bar { height: 6px; background: #${colorsFromTheme(presentation.themeId).accent}; width: 100%; flex-shrink: 0; }
+  .top-bar, .title-bar { height: 6px; background: #${c.accent}; width: 100%; flex-shrink: 0; }
   .title-content { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 80px; text-align: center; }
-  .title-content h1 { color: #${colorsFromTheme(presentation.themeId).title}; font-size: clamp(32px, 5vw, 72px); font-weight: 800; line-height: 1.1; }
-  .subtitle { color: #${colorsFromTheme(presentation.themeId).muted}; font-size: clamp(16px, 2vw, 28px); margin-top: 24px; }
-  .accent-line { width: 60px; height: 4px; background: #${colorsFromTheme(presentation.themeId).accent}; border-radius: 2px; margin-bottom: 32px; }
+  .title-content h1 { color: #${c.title}; font-size: clamp(32px, 5vw, 72px); font-weight: 800; line-height: 1.1; }
+  .subtitle { color: #${c.muted}; font-size: clamp(16px, 2vw, 28px); margin-top: 24px; }
+  .accent-line { width: 60px; height: 4px; background: #${c.accent}; border-radius: 2px; margin-bottom: 32px; }
   .slide-header { padding: 32px 60px 0; }
-  .slide-header h2 { color: #${colorsFromTheme(presentation.themeId).title}; font-size: clamp(24px, 3.5vw, 52px); font-weight: 700; }
-  .header-line { width: 56px; height: 3px; background: #${colorsFromTheme(presentation.themeId).accent}; border-radius: 2px; margin-top: 8px; }
+  .slide-header h2 { color: #${c.title}; font-size: clamp(24px, 3.5vw, 52px); font-weight: 700; }
+  .header-line { width: 56px; height: 3px; background: #${c.accent}; border-radius: 2px; margin-top: 8px; }
   .bullets { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; padding: 24px 60px; }
   .bullet-row { display: flex; align-items: flex-start; gap: 16px; }
-  .bullet-dot { width: 10px; height: 10px; border-radius: 50%; background: #${colorsFromTheme(presentation.themeId).accent}; flex-shrink: 0; margin-top: 8px; }
-  .bullet-row p { color: #${colorsFromTheme(presentation.themeId).text}; font-size: clamp(16px, 2.2vw, 28px); line-height: 1.5; }
+  .bullet-dot { width: 10px; height: 10px; border-radius: 50%; background: #${c.accent}; flex-shrink: 0; margin-top: 8px; }
+  .bullet-row p { color: #${c.text}; font-size: clamp(16px, 2.2vw, 28px); line-height: 1.5; }
+  .body-text { color: #${c.text}; font-size: clamp(14px, 2vw, 24px); line-height: 1.6; margin-bottom: 16px; }
   .stats-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; padding: 24px 60px; }
-  .stat-box { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-  .stat-value { font-size: clamp(28px, 4vw, 56px); font-weight: 800; color: #${colorsFromTheme(presentation.themeId).accent}; }
-  .stat-label { color: #${colorsFromTheme(presentation.themeId).muted}; font-size: clamp(12px, 1.5vw, 20px); margin-top: 8px; }
-  .quote-bar { width: 6px; background: #${colorsFromTheme(presentation.themeId).accent}; position: absolute; top: 10%; bottom: 10%; left: 48px; border-radius: 3px; }
+  .stat-box { background: ${statBoxBg}; border: 1px solid ${statBoxBorder}; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .stat-value { font-size: clamp(28px, 4vw, 56px); font-weight: 800; color: #${c.accent}; }
+  .stat-label { color: #${c.muted}; font-size: clamp(12px, 1.5vw, 20px); margin-top: 8px; }
+  .quote-bar { width: 6px; background: #${c.accent}; position: absolute; top: 10%; bottom: 10%; left: 48px; border-radius: 3px; }
   .quote-content { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 120px; text-align: center; }
-  .big-quote { font-size: 120px; line-height: 1; color: #${colorsFromTheme(presentation.themeId).accent}; font-family: Georgia; opacity: 0.6; margin-bottom: -24px; }
-  blockquote { color: #${colorsFromTheme(presentation.themeId).title}; font-size: clamp(20px, 3vw, 38px); font-style: italic; line-height: 1.4; margin-bottom: 24px; }
-  .attribution { color: #${colorsFromTheme(presentation.themeId).muted}; font-size: clamp(14px, 2vw, 22px); font-weight: 600; }
-  .quote-title { color: #${colorsFromTheme(presentation.themeId).muted}; font-size: 18px; margin-top: 24px; }
-  .slide-number { position: absolute; bottom: 16px; right: 24px; color: rgba(255,255,255,0.25); font-size: 12px; }
+  .big-quote { font-size: 120px; line-height: 1; color: #${c.accent}; font-family: Georgia; opacity: 0.6; margin-bottom: -24px; }
+  blockquote { color: #${c.title}; font-size: clamp(20px, 3vw, 38px); font-style: italic; line-height: 1.4; margin-bottom: 24px; }
+  .attribution { color: #${c.muted}; font-size: clamp(14px, 2vw, 22px); font-weight: 600; }
+  .quote-title { color: #${c.muted}; font-size: 18px; margin-top: 24px; }
+  .two-col { flex: 1; display: flex; gap: 0; padding: 16px 40px 24px; overflow: hidden; }
+  .col { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 0 20px; }
+  .col-divider { width: 2px; background: ${colDividerBg}; flex-shrink: 0; margin: 0 8px; }
+  .slide-number { position: absolute; bottom: 16px; right: 24px; color: ${slideNumColor}; font-size: 12px; }
   .controls { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 40px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
   .controls button { background: rgba(255,255,255,0.1); border: none; color: white; cursor: pointer; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-family: inherit; }
   .controls button:hover { background: rgba(255,255,255,0.2); }
