@@ -28,7 +28,22 @@ function colorsFromTheme(themeId: string): ExportColors {
 const SLIDE_W_PX = 1280;
 const SLIDE_H_PX = 720;
 
-function generateHTMLPresentation(presentation: Presentation): string {
+async function fetchAsDataUrl(url: string): Promise<string> {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return url; // fall back to original URL if fetch fails
+  }
+}
+
+async function generateHTMLPresentation(presentation: Presentation): Promise<string> {
   const theme = getTheme(presentation.themeId);
   const c = colorsFromTheme(presentation.themeId);
 
@@ -41,6 +56,13 @@ function generateHTMLPresentation(presentation: Presentation): string {
   const statBoxBg = isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.05)';
   const statBoxBorder = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.1)';
   const colDividerBg = isLight ? 'rgba(0,0,0,0.1)' : `rgba(${parseInt(c.accent.substring(0,2),16)},${parseInt(c.accent.substring(2,4),16)},${parseInt(c.accent.substring(4,6),16)},0.3)`;
+
+  // Logo — fetch and embed as base64 so the HTML is self-contained
+  const logoSrc = theme.logoUrl ? await fetchAsDataUrl(theme.logoUrl) : null;
+  const logoFilter = theme.logoFilter ?? 'none';
+  const logoHTML = logoSrc
+    ? `<img src="${logoSrc}" alt="" style="position:absolute;bottom:24px;right:36px;height:52px;width:auto;opacity:0.8;filter:${logoFilter};pointer-events:none;" />`
+    : '';
 
   // Font
   const fontFamily = presentation.fontFamily
@@ -118,6 +140,7 @@ function generateHTMLPresentation(presentation: Presentation): string {
       <div class="slide ${i === 0 ? 'active' : ''}" id="slide-${i}" data-index="${i}" style="background: ${theme.background}; position: relative;">
         ${innerHTML}
         ${imagesHTML}
+        ${logoHTML}
         <div class="slide-number">${i + 1} / ${presentation.slides.length}</div>
       </div>`;
   }).join('\n');
@@ -342,8 +365,8 @@ export function importFromHTML(file: File): Promise<Presentation> {
   });
 }
 
-export function exportToHTML(presentation: Presentation): void {
-  const html = generateHTMLPresentation(presentation);
+export async function exportToHTML(presentation: Presentation): Promise<void> {
+  const html = await generateHTMLPresentation(presentation);
   downloadBlob(html, `${presentation.title.replace(/[^a-z0-9]/gi, '_')}.html`, 'text/html');
 }
 

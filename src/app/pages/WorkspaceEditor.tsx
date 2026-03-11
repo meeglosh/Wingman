@@ -336,9 +336,9 @@ function ExportDropdown({ presentation, onClose }: { presentation: Presentation;
     onClose();
   };
 
-  const handleDownloadHTML = () => {
+  const handleDownloadHTML = async () => {
     try {
-      exportToHTML(presentation);
+      await exportToHTML(presentation);
     } catch (e) {
       alert(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
