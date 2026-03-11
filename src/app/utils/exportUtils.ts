@@ -166,19 +166,18 @@ ${googleFontLink}
   .two-col { flex: 1; display: flex; gap: 0; padding: 16px 40px 24px; overflow: hidden; }
   .col { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 0 20px; }
   .col-divider { width: 2px; background: ${colDividerBg}; flex-shrink: 0; margin: 0 8px; }
-  .slide-number { position: absolute; bottom: 16px; right: 24px; color: ${slideNumColor}; font-size: 12px; }
-  .controls { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 40px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+  .slide-number { position: absolute; bottom: 16px; right: 24px; color: ${slideNumColor}; font-size: 12px; transition: opacity 0.4s; }
+  .controls { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 40px; backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); transition: opacity 0.4s; }
   .controls button { background: rgba(255,255,255,0.1); border: none; color: white; cursor: pointer; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-family: inherit; }
   .controls button:hover { background: rgba(255,255,255,0.2); }
   .slide-counter { color: rgba(255,255,255,0.5); font-size: 13px; }
-  .title-badge { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.4); font-size: 13px; font-family: inherit; background: rgba(0,0,0,0.4); padding: 6px 16px; border-radius: 20px; backdrop-filter: blur(6px); }
+  .ui-hidden .controls, .ui-hidden .slide-number { opacity: 0; pointer-events: none; }
 </style>
 </head>
 <body>
 <div class="presentation" id="presentation">
   ${slidesHTML}
 </div>
-<div class="title-badge">${escHtml(presentation.title)} · Created with Wingman</div>
 <div class="controls">
   <button onclick="prev()">← Prev</button>
   <span class="slide-counter" id="counter">1 / ${presentation.slides.length}</span>
@@ -196,9 +195,19 @@ ${googleFontLink}
   function next() { if (current < total - 1) show(current + 1); }
   function prev() { if (current > 0) show(current - 1); }
   document.addEventListener('keydown', e => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') next();
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') prev();
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { next(); wake(); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { prev(); wake(); }
   });
+  // Hide UI chrome after 2.5s of inactivity, show on mouse move / click
+  let hideTimer;
+  function wake() {
+    document.body.classList.remove('ui-hidden');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => document.body.classList.add('ui-hidden'), 2500);
+  }
+  document.addEventListener('mousemove', wake);
+  document.addEventListener('mousedown', wake);
+  wake();
 </script>
 </body>
 </html>`;
