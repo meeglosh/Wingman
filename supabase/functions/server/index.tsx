@@ -27,14 +27,16 @@ app.get("/make-server-21013d34/health", (c) => {
 // ── Unsplash image proxy ────────────────────────────────────────────────────
 app.get("/make-server-8474fcb9/unsplash", async (c) => {
   const q = c.req.query("q") || "professional presentation";
+  const multiple = c.req.query("multiple") === "true";
   const key = Deno.env.get("UNSPLASH_ACCESS_KEY");
   if (!key) {
     console.log("UNSPLASH_ACCESS_KEY not configured");
     return c.json({ error: "UNSPLASH_ACCESS_KEY not configured" }, 500);
   }
   try {
+    const perPage = multiple ? 12 : 5;
     const res = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(q)}&orientation=landscape&per_page=5&order_by=relevant`,
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(q)}&orientation=landscape&per_page=${perPage}&order_by=relevant`,
       { headers: { Authorization: `Client-ID ${key}` } },
     );
     if (!res.ok) {
@@ -44,6 +46,19 @@ app.get("/make-server-8474fcb9/unsplash", async (c) => {
     }
     const data = await res.json();
     const results = data.results ?? [];
+
+    if (multiple) {
+      return c.json(results.slice(0, 12).map((photo: any) => ({
+        url: photo.urls?.regular ?? photo.urls?.full,
+        thumbUrl: photo.urls?.small,
+        alt: photo.alt_description ?? q,
+        credit: {
+          name: photo.user?.name ?? "Unknown",
+          profileUrl: `${photo.user?.links?.html ?? "https://unsplash.com"}?utm_source=wingman&utm_medium=referral`,
+        },
+      })));
+    }
+
     const idx = Math.floor(Math.random() * Math.min(results.length, 5));
     const photo = results[idx];
     if (!photo) return c.json({ url: null });

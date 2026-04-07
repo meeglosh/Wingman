@@ -1,5 +1,10 @@
 import React from 'react';
-import type { Slide, SlideTheme } from '../types/presentation';
+import type { Slide, SlideElement, SlideTheme } from '../types/presentation';
+import { ChartElement } from './ChartElement';
+
+function buildBoxShadow(el: SlideElement): string | null {
+  return el.dropShadow ?? null;
+}
 
 interface SlideRendererProps {
   slide: Slide;
@@ -25,14 +30,19 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
     transformOrigin: 'top left',
     position: 'relative',
     overflow: 'hidden',
-    background: slide.backgroundImageUrl ? '#000' : theme.background,
+    background: (() => {
+      const mode = slide.backgroundMode ?? (slide.backgroundImageUrl ? 'image' : slide.backgroundGradient ? 'gradient' : 'color');
+      if (mode === 'image' && slide.backgroundImageUrl) return '#000';
+      if (mode === 'gradient' && slide.backgroundGradient) return `linear-gradient(${slide.backgroundGradient.angle}deg, ${slide.backgroundGradient.from}, ${slide.backgroundGradient.to})`;
+      return slide.backgroundColor ?? theme.background;
+    })(),
     fontFamily: resolvedFont,
   };
 
   return (
     <div style={containerStyle}>
-      {/* Background image layer - rendered first, kept behind content via z-index */}
-      {slide.backgroundImageUrl && (
+      {/* Background image layer */}
+      {slide.backgroundImageUrl && (slide.backgroundMode === 'image' || !slide.backgroundMode) && (
         <>
           <img
             src={slide.backgroundImageUrl}
@@ -41,36 +51,96 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
               position: 'absolute', inset: 0, zIndex: 0,
               width: '100%', height: '100%',
               objectFit: 'cover',
-              filter: 'brightness(0.75)',
             }}
           />
-          {/* subtle gradient scrim for text legibility */}
           <div style={{
             position: 'absolute', inset: 0, zIndex: 1,
-            background: 'linear-gradient(160deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.45) 100%)',
+            background: `rgba(0,0,0,${slide.backgroundOverlayOpacity ?? 0.45})`,
           }} />
         </>
       )}
 
-      {/* Slide content - always above background */}
-      <div style={{ position: 'relative', zIndex: 2, width: '100%', height: '100%' }}>
-        {/* When there's a photo bg, force light text regardless of theme */}
-        {(() => {
-          const t: SlideTheme = slide.backgroundImageUrl
-            ? { ...theme, titleColor: '#FFFFFF', textColor: 'rgba(255,255,255,0.92)', mutedColor: 'rgba(255,255,255,0.72)' }
-            : theme;
-          return (
-            <>
-              {layout === 'title' && <TitleLayout content={content} theme={t} />}
-              {layout === 'content' && <ContentLayout content={content} theme={t} />}
-              {layout === 'bullets' && <BulletsLayout content={content} theme={t} />}
-              {layout === 'quote' && <QuoteLayout content={content} theme={t} />}
-              {layout === 'stats' && <StatsLayout content={content} theme={t} />}
-              {layout === 'two-column' && <TwoColumnLayout content={content} theme={t} />}
-            </>
-          );
-        })()}
-      </div>
+      {/* Free-form elements (editor mode) */}
+      {slide.elements && slide.elements.length > 0 ? (
+        <>
+          {slide.elements.map(el => (
+            <div
+              key={el.id}
+              style={{
+                position: 'absolute',
+                left: el.x, top: el.y,
+                width: el.width, height: el.height,
+                zIndex: el.zIndex + 2,
+                boxSizing: 'border-box',
+                padding: el.type === 'text' ? 4 : 0,
+                overflow: 'hidden',
+                borderRadius: el.borderRadius ? `${el.borderRadius}px` : undefined,
+                boxShadow: buildBoxShadow(el) ?? undefined,
+                transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+                transformOrigin: 'center center',
+              }}
+            >
+              {el.type === 'image' && el.src && (
+                <>
+                  <img
+                    src={el.src}
+                    alt={el.alt ?? ''}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                  {el.strokeWidth && el.strokeWidth > 0 && (
+                    <div style={{
+                      position: 'absolute',
+                      inset: 0,
+                      boxShadow: `inset 0 0 0 ${el.strokeWidth}px ${el.strokeColor ?? '#ffffff'}`,
+                      borderRadius: el.borderRadius ? `${el.borderRadius}px` : undefined,
+                      pointerEvents: 'none',
+                      zIndex: 1,
+                    }} />
+                  )}
+                </>
+              )}
+              {el.type === 'chart' && el.chartData && (
+                <ChartElement chartData={el.chartData} width={el.width} height={el.height} />
+              )}
+              {el.type === 'text' && (
+                <div style={{
+                  width: '100%', height: '100%',
+                  fontSize: el.fontSize ?? 24,
+                  fontWeight: el.fontWeight ?? 'normal',
+                  fontStyle: el.fontStyle ?? 'normal',
+                  color: el.color ?? theme.textColor,
+                  textAlign: el.textAlign ?? 'left',
+                  lineHeight: 1.4,
+                  whiteSpace: 'pre-wrap',
+                  overflow: 'hidden',
+                  fontFamily: el.fontFamily ?? 'inherit',
+                }}>
+                  {el.content}
+                </div>
+              )}
+            </div>
+          ))}
+        </>
+      ) : (
+        /* Layout-based rendering (playback / thumbnails of unconverted slides) */
+        <div style={{ position: 'relative', zIndex: 2, width: '100%', height: '100%' }}>
+          {(() => {
+            const t: SlideTheme = slide.backgroundImageUrl
+              ? { ...theme, titleColor: '#FFFFFF', textColor: 'rgba(255,255,255,0.92)', mutedColor: 'rgba(255,255,255,0.72)' }
+              : theme;
+            return (
+              <>
+                {layout === 'title' && <TitleLayout content={content} theme={t} />}
+                {layout === 'content' && <ContentLayout content={content} theme={t} />}
+                {layout === 'bullets' && <BulletsLayout content={content} theme={t} />}
+                {layout === 'quote' && <QuoteLayout content={content} theme={t} />}
+                {layout === 'stats' && <StatsLayout content={content} theme={t} />}
+                {layout === 'two-column' && <TwoColumnLayout content={content} theme={t} />}
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Live transcript ticker */}
       {isActive && liveTranscript && (
