@@ -210,7 +210,11 @@ app.post("/make-server-8474fcb9/summarize-bullet", async (c) => {
     return c.json({ bullet: null });
   }
 
-  const systemPrompt = `You are a presentation assistant. Convert the following spoken text into a single concise bullet point of no more than 10 words. The bullet must be a complete, meaningful sentence or phrase -- never a fragment. If the text is unclear or too short to summarize meaningfully, return nothing.`;
+  const systemPrompt = `You are a presentation assistant. Convert the following spoken text into a single concise bullet point of 6–12 words. Rules:
+- Must be a complete sentence ending with a period
+- Never a fragment or partial thought
+- Start with a strong verb or noun — no filler openers like "So" or "Well"
+- If the text is too short or unclear to form a complete sentence, return nothing`;
 
   const userPrompt = `Presentation: "${presentationTitle || "Untitled"}"
 Speech: "${text.trim()}"`;
@@ -247,11 +251,13 @@ Speech: "${text.trim()}"`;
       return c.json({ bullet: null });
     }
 
-    const bullet = raw
+    const cleaned = raw
       .replace(/^["'`]|["'`]$/g, "")
-      .replace(/[.!?,;:]+$/, "")
+      .replace(/^[-•*]\s*/, "")
       .trim();
 
+    // Ensure ends with sentence-closing punctuation
+    const bullet = /[.!?]$/.test(cleaned) ? cleaned : cleaned + '.';
     const capitalized = bullet.charAt(0).toUpperCase() + bullet.slice(1);
     console.log("Summarized bullet:", capitalized);
     return c.json({ bullet: capitalized });

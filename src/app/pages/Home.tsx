@@ -149,7 +149,7 @@ export default function Home() {
 
           {/* Headline */}
           <h1
-            className="text-center text-white mb-4"
+            className="text-center text-white mb-3"
             style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', fontWeight: 800, lineHeight: 1.1, letterSpacing: '-0.03em' }}
           >
             What will you present
@@ -158,7 +158,10 @@ export default function Home() {
               today?
             </span>
           </h1>
-          <p className="text-center mb-10" style={{ color: '#64748B', fontSize: 16, lineHeight: 1.6 }}>Describe your topic and Wingman will build the first slide. Then just speak; your presentation grows as you talk.</p>
+          <p className="text-center mb-8" style={{ color: '#9B8EC4', fontSize: 15, fontWeight: 500, letterSpacing: '0.01em' }}>
+            For speakers who think on their feet.
+          </p>
+          <p className="text-center mb-10" style={{ color: '#94A3B8', fontSize: 16, lineHeight: 1.6 }}>Describe your topic and Wingman will build the first slide. Then just speak; your presentation grows as you talk.</p>
 
           {/* Topic input card */}
           <div
@@ -209,7 +212,7 @@ export default function Home() {
                     />
                   );
                 })}
-                <span style={{ color: '#475569', fontSize: 11, fontWeight: 500, marginLeft: 4 }}>
+                <span style={{ color: '#7C8FA8', fontSize: 11, fontWeight: 500, marginLeft: 4 }}>
                   theme
                 </span>
               </div>
@@ -259,7 +262,7 @@ export default function Home() {
                       }}
                     >
                       <div className="px-3 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                        <p style={{ color: '#475569', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                        <p style={{ color: '#7C8FA8', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
                           Presentation Font
                         </p>
                       </div>
@@ -295,7 +298,7 @@ export default function Home() {
                                   <p style={{ fontFamily: font.family, fontSize: 13, fontWeight: 600, color: isActive ? '#C4B5FD' : '#E2E8F0', lineHeight: 1.2 }}>
                                     {font.name}
                                   </p>
-                                  <p style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>{font.style} · {font.serif ? 'Serif' : 'Sans'}</p>
+                                  <p style={{ fontSize: 10, color: '#7C8FA8', marginTop: 1 }}>{font.style} · {font.serif ? 'Serif' : 'Sans'}</p>
                                 </div>
                               </div>
                               {isActive && (
@@ -327,7 +330,7 @@ export default function Home() {
                   background: topic.trim()
                     ? 'linear-gradient(135deg, #7C3AED, #6D28D9)'
                     : 'rgba(255,255,255,0.06)',
-                  color: topic.trim() ? 'white' : '#475569',
+                  color: topic.trim() ? 'white' : '#7C8FA8',
                   boxShadow: topic.trim() ? '0 4px 20px rgba(124,58,237,0.35)' : 'none',
                   cursor: topic.trim() && !isGenerating ? 'pointer' : 'not-allowed',
                 }}
@@ -343,10 +346,15 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Keyboard hint */}
-          <p className="text-center mt-4" style={{ color: '#334155', fontSize: 12 }}>
-            Press <kbd style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 6px', borderRadius: 4, fontSize: 11 }}>⌘ Enter</kbd> to generate
-          </p>
+          {/* Keyboard hint + pro tip */}
+          <div className="flex flex-col items-center gap-2 mt-4">
+            <p className="text-center" style={{ color: '#7C8FA8', fontSize: 12 }}>
+              Press <kbd style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 6px', borderRadius: 4, fontSize: 11 }}>⌘ Enter</kbd> to generate
+            </p>
+            <p className="text-center" style={{ color: '#7C8FA8', fontSize: 12, lineHeight: 1.5 }}>
+              <span style={{ color: '#9B8EC4', fontWeight: 600 }}>Pro tip:</span> Say <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>"next slide"</span> while presenting to move on to a new slide.
+            </p>
+          </div>
         </motion.div>
 
         {/* Feature pills */}
@@ -359,13 +367,13 @@ export default function Home() {
           {[
             { icon: '🎙️', text: 'Speech-to-slide in real time' },
             { icon: '🖼️', text: 'AI-matched photo backgrounds' },
-            { icon: '📊', text: 'Export to PowerPoint & Keynote' },
+            { icon: '📊', text: 'Export to PowerPoint or HTML' },
             { icon: '✏️', text: 'Edit every slide after the fact' },
           ].map(f => (
             <span
               key={f.text}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748B' }}
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#94A3B8' }}
             >
               {f.icon} {f.text}
             </span>

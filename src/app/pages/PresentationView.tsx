@@ -582,13 +582,17 @@ export default function PresentationView() {
   const finalizeCurrentSlide = useCallback(() => {
     const pres = presentationRef.current;
     const slideId = activeSlideIdRef.current;
-    const bullets = activeBulletsRef.current;
     if (!pres || !slideId) return pres;
     const slide = pres.slides.find(s => s.id === slideId);
     if (!slide) return pres;
+    // Prefer active bullets when non-empty; fall back to whatever is already stored
+    // so we never wipe AI-generated bullets by finalizing with an empty active state.
+    const activeBullets = activeBulletsRef.current.filter(b => b.length > 0);
+    const existingBullets = slide.content.bullets ?? [];
+    const finalBullets = activeBullets.length > 0 ? activeBullets : existingBullets;
     const updated = updateSlide(pres, {
       ...slide,
-      content: { ...slide.content, bullets: bullets.filter(b => b.length > 0) },
+      content: { ...slide.content, bullets: finalBullets },
     });
     presentationRef.current = updated;
     setPresentation(updated);

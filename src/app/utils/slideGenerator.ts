@@ -118,23 +118,30 @@ export function formatBulletPoint(rawText: string): string | null {
     .trim();
 
   // Remove trailing qualifiers that weaken the bullet
-  s = s
-    .replace(/,\s*(you know|right|i think|i guess|i mean|or something|kind of|sort of)(\.?)\s*$/i, '')
-    .replace(/[.!?,;:]+$/, '')
-    .trim();
+  s = s.replace(/,\s*(you know|right|i think|i guess|i mean|or something|kind of|sort of)(\.?)\s*$/i, '').trim();
 
   // Too short / too few words to be a meaningful bullet
-  const wordCount = s.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 3 || s.length < 10) return null;
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length < 4 || s.length < 12) return null;
 
-  // Drop naked fragment starters without a real subject (e.g. "it really has")
-  if (/^(it|is|was|were|and then|but then|that is|which is)\b/i.test(s) && wordCount < 5) return null;
+  // Drop naked fragment starters without a real subject
+  if (/^(it|is|was|were|and then|but then|that is|which is)\b/i.test(s) && words.length < 6) return null;
 
   // Drop meta-speech about the presentation/slide itself
   if (/\b(this slide|next slide|new slide|bullet point|the formatting|slide deck)\b/i.test(s)) return null;
 
-  // Capitalize first letter
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  // Cap at 15 words — take the first sentence if the buffer contains multiple
+  const firstSentenceMatch = s.match(/^[^.!?]+[.!?]/);
+  if (firstSentenceMatch) {
+    s = firstSentenceMatch[0].trim();
+  } else if (words.length > 15) {
+    s = words.slice(0, 15).join(' ');
+  }
+
+  // Capitalize first letter and ensure sentence ends with a period
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  if (!/[.!?]$/.test(s)) s += '.';
+  return s;
 }
 
 export function splitIntoSentences(text: string): string[] {
@@ -404,6 +411,13 @@ export async function generateSlideWithAI(
 
     // Strip the redundant "layout" key OpenAI echoes into the content object
     delete (content as any).layout;
+
+    // Ensure every bullet ends with a period
+    if (content.bullets) {
+      content.bullets = content.bullets.map(b =>
+        b && /[.!?]$/.test(b.trim()) ? b.trim() : b.trim() + '.',
+      );
+    }
 
     const suggestions = generateSuggestions(content.title, content.bullets ?? [], previousSlides);
     return { layout, content, suggestions };

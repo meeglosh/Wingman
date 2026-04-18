@@ -40,9 +40,10 @@ export function layoutToElements(slide: Slide, theme: SlideTheme): SlideElement[
 
     case 'content': {
       const bullets = content.bullets ?? [];
-      const bodyText = content.body
-        ? content.body
-        : bullets.map(b => `• ${b}`).join('\n\n');
+      // Bullets saved by finalizeCurrentSlide always take precedence over AI body text
+      const bodyText = bullets.length > 0
+        ? bullets.map(b => `• ${b}`).join('\n\n')
+        : (content.body ?? '');
       return [
         el({ type: 'text', x: 72, y: 200, width: 960, height: 100,
           content: content.title,
