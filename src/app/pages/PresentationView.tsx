@@ -596,8 +596,30 @@ export default function PresentationView() {
     });
     presentationRef.current = updated;
     setPresentation(updated);
+    console.log('[Wingman Finalize] slide', slideId, '→ bullets:', finalBullets);
     return updated;
   }, [updateSlide]);
+
+  // ── Synchronously persist bullets to presentationRef + localStorage ───────────
+  // Called directly from flushSentenceBuffer so that presentationRef.current
+  // is always up-to-date BEFORE any async continuation reads it.
+  const persistActiveBullets = useCallback((bullets: string[]) => {
+    if (phaseRef.current !== 'speaking' || bullets.length === 0) return;
+    const pres = presentationRef.current;
+    const slideId = activeSlideIdRef.current;
+    if (!pres || !slideId) return;
+    const slide = pres.slides.find(s => s.id === slideId);
+    if (!slide) return;
+    const updatedPres = updateSlide(pres, {
+      ...slide,
+      content: { ...slide.content, bullets },
+    });
+    presentationRef.current = updatedPres;
+  }, [updateSlide]);
+
+  // Keep a ref so flushSentenceBuffer (which has [] deps) can always call the latest version
+  const persistActiveBulletsRef = useRef(persistActiveBullets);
+  persistActiveBulletsRef.current = persistActiveBullets;
 
   // ── Generate a new slide from buffered transcript ──────────────────────────
   // Two-phase: Phase 1 → call AI + create/update slide so the title appears
@@ -639,20 +661,36 @@ export default function PresentationView() {
 
       if (populatingBlankId) {
         // ── Update blank placeholder in-place ──────────────────────────────
-        const blankSlide = savedPres.slides.find(s => s.id === populatingBlankId);
+        // Use the LATEST presentationRef, not stale savedPres — startBlankSlide
+        // may have added more slides during the AI await and savedPres won't
+        // contain them, which would wipe those slides from the presentation.
+        const latestPres = presentationRef.current ?? savedPres;
+        const blankSlide = latestPres.slides.find(s => s.id === populatingBlankId);
         if (!blankSlide) { isGeneratingRef.current = false; setIsGenerating(false); return; }
 
-        const withContent = updateSlide(savedPres, {
+        // persistActiveBullets() wrote sentence-buffer bullets into
+        // blankSlide.content.bullets synchronously as they were generated.
+        // Prefer those over AI-generated bullets; fall back to AI if none yet.
+        const persistedBullets = (blankSlide.content.bullets ?? []).filter(b => b.length > 0);
+        const bulletsToUse = persistedBullets.length > 0 ? persistedBullets : aiBullets;
+
+        const withContent = updateSlide(latestPres, {
           ...blankSlide,
           layout: result.layout,
-          content: result.content,
+          content: { ...result.content, bullets: bulletsToUse },
           transcript: buffer.trim(),
           generatedAt: Date.now(),
         });
         targetSlideId = populatingBlankId;
         setPresentation(withContent);
         presentationRef.current = withContent;
-        // activeSlideId is already correct — no change needed
+
+        // Only seed activeBullets display if still on this slide and nothing accumulated yet.
+        // If the user has already moved to the next slide, don't overwrite their bullets.
+        if (activeSlideIdRef.current === populatingBlankId && activeBulletsRef.current.length === 0 && aiBullets.length > 0) {
+          setActiveBullets(aiBullets);
+          activeBulletsRef.current = aiBullets;
+        }
       } else {
         // ── Standard path: add a new slide ─────────────────────────────────
         const slideData: Omit<Slide, 'id'> = {
@@ -672,11 +710,10 @@ export default function PresentationView() {
         setActiveSlideId(targetSlideId);
         activeSlideIdRef.current = targetSlideId;
         setViewingSlideIdx(null);
+        // New slide — seed display with AI bullets and clear old slide's residue
+        setActiveBullets(aiBullets);
+        activeBulletsRef.current = aiBullets;
       }
-
-      // Seed AI-generated bullets into the active state (shared by both paths)
-      setActiveBullets(aiBullets);
-      activeBulletsRef.current = aiBullets;
       setIsGenerating(false);
       isGeneratingRef.current = false;
 
@@ -712,6 +749,29 @@ export default function PresentationView() {
   // No title, no bullets, no image fetch. generateSlideFromBuffer will populate
   // the slide in-place once the speaker provides enough content.
   const startBlankSlide = useCallback(async () => {
+    // Synchronously convert any pending sentence-buffer text to a local bullet
+    // before clearing it, so content isn't lost if the API call hasn't returned yet.
+    const pendingSentence = sentenceBufferRef.current.trim();
+    if (pendingSentence) {
+      const wc = pendingSentence.split(/\s+/).filter(Boolean).length;
+      if (wc >= 4) {
+        const localBullet = formatBulletPoint(pendingSentence);
+        if (localBullet) {
+          const nb = [...activeBulletsRef.current, localBullet].slice(-5);
+          activeBulletsRef.current = nb;
+          const cId = activeSlideIdRef.current;
+          const cPres = presentationRef.current;
+          if (cPres && cId) {
+            presentationRef.current = {
+              ...cPres,
+              slides: cPres.slides.map(s =>
+                s.id === cId ? { ...s, content: { ...s.content, bullets: nb } } : s
+              ),
+            };
+          }
+        }
+      }
+    }
     transcriptBufferRef.current      = '';
     sentenceBufferRef.current        = '';
     isSentenceFlushingRef.current    = false; // cancel any in-flight flush guard
@@ -766,8 +826,19 @@ export default function PresentationView() {
     // Flush any remaining buffer content as a final slide
     const remaining = transcriptBufferRef.current.trim();
     transcriptBufferRef.current = '';
-    // Discard sentence buffer — no partial bullets at end of presentation
+    // Convert any remaining sentence-buffer text to a local bullet before discarding
+    const pendingSentence = sentenceBufferRef.current.trim();
     sentenceBufferRef.current = '';
+    if (pendingSentence) {
+      const wc = pendingSentence.split(/\s+/).filter(Boolean).length;
+      if (wc >= 4) {
+        const localBullet = formatBulletPoint(pendingSentence);
+        if (localBullet) {
+          const nb = [...activeBulletsRef.current, localBullet].slice(-5);
+          activeBulletsRef.current = nb;
+        }
+      }
+    }
     if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
     // Clear generating state so the spinner doesn't persist on the ended screen
     isGeneratingRef.current = false;
@@ -788,43 +859,62 @@ export default function PresentationView() {
     cmdFeedbackTimerRef.current = setTimeout(() => setCmdFeedback(null), 2200);
   }, []);
 
-  // ── Flush sentence buffer → AI summarize → add clean bullet ──────────────
+  // ── Flush sentence buffer → bullet ──────────────────────────────────────────
+  // Two-phase: (1) add a local bullet immediately so it's always available for
+  // finalize; (2) call AI in the background and swap the local version out if
+  // the API returns something better.
   const flushSentenceBuffer = useCallback(async () => {
-    // Cancel the pause timer so it doesn't fire again for this batch
     if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
-
-    // Guard: if a summarization is already in-flight, leave the buffer intact
-    // so the accumulated text survives for the next flush.
     if (isSentenceFlushingRef.current) return;
 
     const buffer = sentenceBufferRef.current.trim();
     if (!buffer) return;
 
-    // Quick pre-filter: skip obviously empty/noise captures before the API call
     const wordCount = buffer.split(/\s+/).filter(Boolean).length;
-    if (wordCount < 4) {
-      console.log('[Wingman SentBuf] Skipping short buffer:', `"${buffer.slice(0, 50)}"`, `(${wordCount} words)`);
-      sentenceBufferRef.current = '';
+    if (wordCount < 3) {
+      // Too short — keep accumulating, re-arm pause timer
+      if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
+      pauseTimerRef.current = setTimeout(() => {
+        if (sentenceBufferRef.current.trim()) flushSentenceBuffer();
+      }, SENTENCE_PAUSE_MS);
       return;
     }
 
     const pres = presentationRef.current;
     if (!pres || phaseRef.current !== 'speaking') { sentenceBufferRef.current = ''; return; }
 
-    // Claim the buffer now — clear it before the async call so incoming text
-    // that arrives during the API round-trip starts a fresh accumulation.
     sentenceBufferRef.current = '';
     isSentenceFlushingRef.current = true;
-    console.log('[Wingman SentBuf] Summarizing:', `"${buffer.slice(0, 80)}"...`);
 
+    // ── Phase 1: local bullet — synchronous, always works ────────────────────
+    const localBullet = formatBulletPoint(buffer);
+    let addedBullet = localBullet;
+    if (localBullet && phaseRef.current === 'speaking') {
+      const withLocal = [...activeBulletsRef.current, localBullet].slice(-5);
+      activeBulletsRef.current = withLocal;
+      setActiveBullets(withLocal);
+      // Persist synchronously so presentationRef.current is up-to-date before
+      // any async continuation (e.g. generateSlideFromBuffer) reads it.
+      persistActiveBulletsRef.current(withLocal);
+      console.log('[Wingman SentBuf] Local bullet:', localBullet);
+    }
+
+    // ── Phase 2: AI bullet — async, may improve quality ──────────────────────
     try {
-      const bullet = await summarizeSpeechToBullet(buffer, pres.title);
-      if (bullet && bullet.length >= 3 && phaseRef.current === 'speaking') {
+      const aiBullet = await summarizeSpeechToBullet(buffer, pres.title);
+      if (aiBullet && aiBullet.length >= 3 && phaseRef.current === 'speaking') {
         setActiveBullets(prev => {
-          const next = [...prev, bullet].slice(-5);
+          // Replace the local placeholder with the AI version, or append if gone
+          const idx = addedBullet ? prev.lastIndexOf(addedBullet) : -1;
+          const next = idx >= 0
+            ? [...prev.slice(0, idx), aiBullet, ...prev.slice(idx + 1)].slice(-5)
+            : [...prev, aiBullet].slice(-5);
           activeBulletsRef.current = next;
+          persistActiveBulletsRef.current(next);
+          console.log('[Wingman SentBuf] AI bullet:', aiBullet);
           return next;
         });
+        addedBullet = aiBullet;
       }
     } finally {
       isSentenceFlushingRef.current = false;
@@ -961,37 +1051,27 @@ export default function PresentationView() {
     //   a) sentence-ending punctuation detected   → flush immediately
     //   b) 2 s pause in speech                    → flush via timer
     //   c) buffer reaches 30 words                → flush immediately
-    //
-    // Exception: while the blank-slide sentinel is active we hold off flushing.
-    // generateSlideFromBuffer will clear the buffer and seed the slide with
-    // AI-produced title + bullets together, so the title always lands first.
     sentenceBufferRef.current += (sentenceBufferRef.current ? ' ' : '') + clean;
     const bufWordCount = sentenceBufferRef.current.split(/\s+/).filter(Boolean).length;
 
-    const blankPending =
-      blankSlideIdRef.current !== null &&
-      blankSlideIdRef.current === activeSlideIdRef.current;
-
-    if (!blankPending) {
-      if (bufWordCount >= SENTENCE_WORD_LIMIT) {
-        // Trigger (c): word limit reached
-        if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
-        flushSentenceBuffer();
-      } else if (endsWithSentenceBoundary(clean)) {
-        // Trigger (a): sentence boundary
-        if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
-        flushSentenceBuffer();
-      } else {
-        // Trigger (b): reset pause timer on every new final transcript
-        if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
-        pauseTimerRef.current = setTimeout(() => {
-          if (sentenceBufferRef.current.trim()) flushSentenceBuffer();
-        }, SENTENCE_PAUSE_MS);
-      }
+    if (bufWordCount >= SENTENCE_WORD_LIMIT) {
+      // Trigger (c): word limit reached
+      if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+      flushSentenceBuffer();
+    } else if (endsWithSentenceBoundary(clean) && bufWordCount >= 8) {
+      // Trigger (a): sentence boundary with enough content to produce a real bullet
+      if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+      flushSentenceBuffer();
+    } else {
+      // Trigger (b): reset pause timer on every new final transcript
+      if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
+      pauseTimerRef.current = setTimeout(() => {
+        if (sentenceBufferRef.current.trim()) flushSentenceBuffer();
+      }, SENTENCE_PAUSE_MS);
     }
 
     // ── Auto-populate blank placeholder ──────────────────────────────────────
-    // Once 5 words have accumulated after "next slide", fire generateSlideFromBuffer
+    // Once 15 words have accumulated after "next slide", fire generateSlideFromBuffer
     // to infer the title and fetch the background image. This replaces the
     // "Composing" spinner that startBlankSlide activated and populates the slide.
     if (
@@ -999,7 +1079,7 @@ export default function PresentationView() {
       blankSlideIdRef.current === activeSlideIdRef.current
     ) {
       const tbWords = transcriptBufferRef.current.split(/\s+/).filter(Boolean).length;
-      if (tbWords >= 5) {
+      if (tbWords >= 15) {
         const snapshot = transcriptBufferRef.current;
         transcriptBufferRef.current = '';
         generateSlideFromBuffer(snapshot);

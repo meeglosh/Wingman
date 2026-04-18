@@ -122,7 +122,7 @@ export function formatBulletPoint(rawText: string): string | null {
 
   // Too short / too few words to be a meaningful bullet
   const words = s.split(/\s+/).filter(Boolean);
-  if (words.length < 4 || s.length < 12) return null;
+  if (words.length < 3 || s.length < 8) return null;
 
   // Drop naked fragment starters without a real subject
   if (/^(it|is|was|were|and then|but then|that is|which is)\b/i.test(s) && words.length < 6) return null;
@@ -419,8 +419,37 @@ export async function generateSlideWithAI(
       );
     }
 
+    // If AI chose "quote" layout but the text has no actual quote markers,
+    // fall back to bullets so content renders properly instead of "— Unknown"
+    let finalLayout = layout;
+    if (layout === 'quote' && content.quote) {
+      const hasQuoteMarkers =
+        /["""''']/.test(content.quote) ||
+        /\b(said|wrote|stated|noted|according to)\b/i.test(content.quote);
+      if (!hasQuoteMarkers) {
+        finalLayout = 'bullets' as SlideLayout;
+        if (!content.bullets?.length) {
+          content.bullets = content.quote
+            .split(/(?<=[.!?])\s+/)
+            .filter(s => s.trim().length > 3)
+            .map(s => {
+              const t = s.trim();
+              return /[.!?]$/.test(t) ? t : t + '.';
+            });
+        }
+        delete (content as any).quote;
+      }
+    }
+    // Strip unhelpful Unknown attribution
+    if (
+      (content as any).attribution === 'Unknown' ||
+      (content as any).attribution === 'unknown'
+    ) {
+      delete (content as any).attribution;
+    }
+
     const suggestions = generateSuggestions(content.title, content.bullets ?? [], previousSlides);
-    return { layout, content, suggestions };
+    return { layout: finalLayout, content, suggestions };
   } catch (e) {
     console.warn('AI slide generation threw, falling back to local:', e);
     return generateSlideFromSpeech(transcript, previousSlides);
