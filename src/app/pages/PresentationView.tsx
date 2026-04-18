@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Mic, MicOff, Edit3, X, Square, Layers, ChevronLeft, ChevronRight, Settings2, Captions, Play } from 'lucide-react';
 import { getPresentation } from '../utils/storage';
 import { usePresentations } from '../context/PresentationContext';
-import { toTitleCase, removeFiller, cleanBullet, formatBulletPoint, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI } from '../utils/slideGenerator';
+import { toTitleCase, removeFiller, cleanBullet, formatBulletPoint, extractUnsplashQuery, generateSlideFromSpeech, generateSlideWithAI, summarizeSpeechToBullet } from '../utils/slideGenerator';
 import { fetchUnsplashImage } from '../utils/unsplash';
 import { isTypingTarget } from '../utils/keyboard';
 import { LiveSlideView } from '../components/LiveSlideView';
@@ -42,38 +42,6 @@ const END_PHRASES = [
 function detectEndPhrase(text: string): boolean {
   const lower = text.toLowerCase();
   return END_PHRASES.some(phrase => lower.includes(phrase));
-}
-
-// ─── Theme-shift phrase detection ────────────────────────────────────────────
-const THEME_SHIFT_PHRASES = [
-  "now let's talk about", "now let's look at", "now let's move to", "now let's discuss",
-  "moving on to", "moving on,",
-  "turning now to", "turning to",
-  "let's move on to", "let's now look at", "let's now talk about",
-  "let's discuss", "let's explore",
-  "i want to talk about", "i'd like to talk about", "i'd like to move on to",
-  "i now want to", "i also want to",
-  "on a different note,", "on another note,",
-  "that brings me to", "which brings me to",
-  "speaking of", "this leads me to",
-  "another key point", "another important point",
-  "another topic", "another area",
-  "the next topic", "the next section",
-];
-
-/**
- * If text contains a theme-shift phrase, returns the content that came AFTER
- * the trigger phrase (to seed the new slide's title), otherwise null.
- */
-function detectThemeShift(text: string): string | null {
-  const lower = text.toLowerCase();
-  for (const phrase of THEME_SHIFT_PHRASES) {
-    const idx = lower.indexOf(phrase);
-    if (idx >= 0) {
-      return text.slice(idx + phrase.length).replace(/^[\s,;.]+/, '').trim();
-    }
-  }
-  return null;
 }
 
 // ─── Force-next slide phrases ─────────────────────────────────────────────────
@@ -120,29 +88,36 @@ function detectVoiceCommand(text: string): VoiceCommand | null {
 }
 
 /**
- * If text contains a force-next trigger, returns the content that came AFTER
- * the trigger phrase (to seed the next slide's buffer), otherwise null.
+ * If text contains a force-next trigger, returns the surrounding words with
+ * the trigger phrase removed (words before + words after). Returns null when
+ * no trigger is found.
  */
-function detectForceNext(text: string): string | null {
+function stripForceNextPhrase(text: string): string | null {
   const lower = text.toLowerCase();
   for (const phrase of FORCE_NEXT_PHRASES) {
     const idx = lower.indexOf(phrase);
     if (idx >= 0) {
-      return text.slice(idx + phrase.length).replace(/^[\s,;.]+/, '').trim();
+      const before = text.slice(0, idx).replace(/[\s,;.]+$/, '').trim();
+      const after  = text.slice(idx + phrase.length).replace(/^[\s,;.]+/, '').trim();
+      return [before, after].filter(Boolean).join(' ');
     }
   }
   return null;
 }
 
-function extractTitleFromShift(afterPhrase: string, fullText: string): string {
-  const source = afterPhrase || fullText;
-  const clean = source
-    .replace(/[.!?]+$/, '')
-    .replace(/^(is |are |the |a |an )/i, '')
-    .trim()
-    .slice(0, 80);
-  return toTitleCase(clean) || 'New Section';
+// ─── Sentence buffer helpers ─────────────────────────────────────────────────
+/** Returns true if the text ends with sentence-ending punctuation. */
+function endsWithSentenceBoundary(text: string): boolean {
+  return /[.?!]\s*$/.test(text.trim());
 }
+
+/** Counts words with more than 2 alphabetic characters (excludes noise/filler). */
+function countMeaningfulWords(text: string): number {
+  return text.trim().split(/\s+/).filter(w => w.replace(/[^a-z]/gi, '').length > 2).length;
+}
+
+const SENTENCE_WORD_LIMIT = 30;   // flush when buffer hits 30 words (trigger c)
+const SENTENCE_PAUSE_MS   = 2000; // flush after 2 s of silence   (trigger b)
 
 // ─── Speech Recognition Hook ─────────────────────────────────────────────────
 function useSpeechRecognition(
@@ -544,13 +519,20 @@ export default function PresentationView() {
   // ── Speech buffer refs ───────────────────────────────────────────────────────
   // Accumulates final transcript chunks; flushed when enough content builds up
   const transcriptBufferRef = useRef<string>('');
-  const lastSlideTimeRef = useRef<number>(Date.now());
   const isGeneratingRef = useRef<boolean>(false);
 
-  // Thresholds for auto-generating a new slide
-  const WORD_THRESHOLD = 35;   // ~15 s of natural speech
-  const TIME_THRESHOLD = 22000; // hard cap: generate after 22 s even if fewer words
-  const MIN_WORDS_FOR_TIME = 12; // don't generate on timer if barely any content
+  // ── Sentence buffer refs (for per-bullet AI summarization) ──────────────────
+  // Text accumulates here; nothing is shown on the slide until an AI-generated
+  // bullet is ready. Flushed on sentence boundary, 2 s pause, or 30 words.
+  const sentenceBufferRef     = useRef<string>('');
+  const pauseTimerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSentenceFlushingRef = useRef<boolean>(false);
+
+  // ── Blank-slide sentinel ─────────────────────────────────────────────────────
+  // When a "next slide" command creates a blank placeholder slide, its ID is
+  // stored here so generateSlideFromBuffer can update it in-place (rather than
+  // stacking a new slide on top of the empty one).
+  const blankSlideIdRef = useRef<string | null>(null);
 
   const syncState = (p: Presentation | null, slideId: string | null, bullets: string[], ph: PresentationPhase) => {
     presentationRef.current = p;
@@ -614,63 +596,96 @@ export default function PresentationView() {
   }, [updateSlide]);
 
   // ── Generate a new slide from buffered transcript ──────────────────────────
-  // Two-phase: Phase 1 → call AI + create slide immediately so the title appears
-  // within ~1–2 s. Phase 2 → fetch background image in the background and update
-  // the slide in place so the crossfade fires once the image is ready.
+  // Two-phase: Phase 1 → call AI + create/update slide so the title appears
+  // within ~1–2 s. Phase 2 → fetch background image in the background.
+  //
+  // Special case: if the active slide is a blank placeholder created by a
+  // "next slide" command (tracked via blankSlideIdRef), we update it in-place
+  // instead of adding a new slide — this prevents orphan blank slides.
   const generateSlideFromBuffer = useCallback(async (buffer: string, minWords = 5) => {
     const wordCount = buffer.trim().split(/\s+/).filter(Boolean).length;
     if (isGeneratingRef.current || wordCount < minWords) return;
     isGeneratingRef.current = true;
     setIsGenerating(true); // ← shimmer bar + "Composing next slide" pill
 
-    const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
+    // Clear sentence buffer synchronously — the AI bullets take over
+    sentenceBufferRef.current = '';
+    if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+
+    // Detect blank-placeholder case and consume the sentinel
+    const populatingBlankId =
+      blankSlideIdRef.current !== null && blankSlideIdRef.current === activeSlideIdRef.current
+        ? blankSlideIdRef.current
+        : null;
+    blankSlideIdRef.current = null;
+
+    // For blank placeholders skip finalizing (no real content there); for normal
+    // slides finalize so in-progress bullets are saved to the slide being closed.
+    const savedPres = populatingBlankId
+      ? (presentationRef.current ?? null)
+      : (finalizeCurrentSlide() ?? presentationRef.current);
     if (!savedPres) { isGeneratingRef.current = false; setIsGenerating(false); return; }
 
     try {
       // ── Phase 1: AI generates title + layout + bullets (~1–2 s) ─────────
       const result = await generateSlideWithAI(buffer.trim(), savedPres.slides, savedPres.title);
-
-      // Create the slide immediately — no background image yet.
-      // The gradient fallback will show until Phase 2 completes.
-      const slideData: Omit<Slide, 'id'> = {
-        layout: result.layout,
-        content: result.content,
-        backgroundImageUrl: undefined,
-        backgroundImageAlt: undefined,
-        unsplashCredit: undefined,
-        transcript: buffer.trim(),
-        generatedAt: Date.now(),
-      };
-
-      const updated = addSlide(savedPres, slideData);
-      const newSlide = updated.slides[updated.slides.length - 1];
-      const newSlideId = newSlide.id; // capture for Phase 2 closure
-
-      // Activate the new slide right now — user sees title + bullets immediately.
-      // Seed activeBullets with the AI-generated ones so they survive finalization.
       const aiBullets = result.content.bullets ?? [];
-      setPresentation(updated);
-      presentationRef.current = updated;
-      setActiveSlideId(newSlideId);
-      activeSlideIdRef.current = newSlideId;
+
+      let targetSlideId: string;
+
+      if (populatingBlankId) {
+        // ── Update blank placeholder in-place ──────────────────────────────
+        const blankSlide = savedPres.slides.find(s => s.id === populatingBlankId);
+        if (!blankSlide) { isGeneratingRef.current = false; setIsGenerating(false); return; }
+
+        const withContent = updateSlide(savedPres, {
+          ...blankSlide,
+          layout: result.layout,
+          content: result.content,
+          transcript: buffer.trim(),
+          generatedAt: Date.now(),
+        });
+        targetSlideId = populatingBlankId;
+        setPresentation(withContent);
+        presentationRef.current = withContent;
+        // activeSlideId is already correct — no change needed
+      } else {
+        // ── Standard path: add a new slide ─────────────────────────────────
+        const slideData: Omit<Slide, 'id'> = {
+          layout: result.layout,
+          content: result.content,
+          backgroundImageUrl: undefined,
+          backgroundImageAlt: undefined,
+          unsplashCredit: undefined,
+          transcript: buffer.trim(),
+          generatedAt: Date.now(),
+        };
+        const updated = addSlide(savedPres, slideData);
+        const newSlide = updated.slides[updated.slides.length - 1];
+        targetSlideId = newSlide.id;
+        setPresentation(updated);
+        presentationRef.current = updated;
+        setActiveSlideId(targetSlideId);
+        activeSlideIdRef.current = targetSlideId;
+        setViewingSlideIdx(null);
+      }
+
+      // Seed AI-generated bullets into the active state (shared by both paths)
       setActiveBullets(aiBullets);
       activeBulletsRef.current = aiBullets;
-      setViewingSlideIdx(null);
-      setIsGenerating(false);       // composing pill disappears
-      isGeneratingRef.current = false; // allow next generation while image loads
+      setIsGenerating(false);
+      isGeneratingRef.current = false;
 
-      // ── Phase 2: fetch background image in background ────────────────────
+      // ── Phase 2: fetch background image (shared by both paths) ───────────
       setIsFetchingImage(true);
       const query = extractUnsplashQuery(result.content.title);
       const image = await fetchUnsplashImage(query);
       setIsFetchingImage(false);
 
       if (image) {
-        // Safely update only the slide we just created (presentation may have
-        // grown while the image was fetching — always read from the ref)
         const currentPres = presentationRef.current;
         if (!currentPres) return;
-        const target = currentPres.slides.find(s => s.id === newSlideId);
+        const target = currentPres.slides.find(s => s.id === targetSlideId);
         if (!target) return;
         const withBg = updateSlide(currentPres, {
           ...target,
@@ -689,22 +704,29 @@ export default function PresentationView() {
     }
   }, [finalizeCurrentSlide, addSlide, updateSlide]);
 
-  // ── Add a new slide (explicit theme shift / force-next with thin buffer) ──
-  // Same two-phase approach: create the slide shell immediately, fetch the
-  // image in the background so it crossfades in once ready.
-  const startNewSlide = useCallback(async (themeContext: string) => {
-    transcriptBufferRef.current = '';
-    lastSlideTimeRef.current = Date.now();
+  // ── Create a blank placeholder slide (force-next command) ────────────────
+  // No title, no bullets, no image fetch. generateSlideFromBuffer will populate
+  // the slide in-place once the speaker provides enough content.
+  const startBlankSlide = useCallback(async () => {
+    transcriptBufferRef.current      = '';
+    sentenceBufferRef.current        = '';
+    isSentenceFlushingRef.current    = false; // cancel any in-flight flush guard
+    if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+
+    // If already on a blank placeholder don't stack another empty slide —
+    // just clear the active state and keep accumulating.
+    if (blankSlideIdRef.current !== null && blankSlideIdRef.current === activeSlideIdRef.current) {
+      setActiveBullets([]);
+      activeBulletsRef.current = [];
+      return;
+    }
 
     const savedPres = finalizeCurrentSlide() ?? presentationRef.current;
     if (!savedPres) return;
 
-    const title = extractTitleFromShift(themeContext, themeContext) || 'Next Section';
-
-    // Phase 1: create slide with title immediately (no image yet)
     const slideData: Omit<Slide, 'id'> = {
       layout: 'bullets',
-      content: { title, bullets: [] },
+      content: { title: '', bullets: [] },
       backgroundImageUrl: undefined,
       backgroundImageAlt: undefined,
       unsplashCredit: undefined,
@@ -712,39 +734,27 @@ export default function PresentationView() {
       generatedAt: Date.now(),
     };
 
-    const updated = addSlide(savedPres, slideData);
-    const newSlide = updated.slides[updated.slides.length - 1];
+    const updated    = addSlide(savedPres, slideData);
+    const newSlide   = updated.slides[updated.slides.length - 1];
     const newSlideId = newSlide.id;
 
+    blankSlideIdRef.current  = newSlideId; // sentinel: populate in-place later
+
     setPresentation(updated);
-    presentationRef.current = updated;
+    presentationRef.current  = updated;
     setActiveSlideId(newSlideId);
     activeSlideIdRef.current = newSlideId;
     setActiveBullets([]);
     activeBulletsRef.current = [];
     setViewingSlideIdx(null);
 
-    // Phase 2: image in background
-    setIsFetchingImage(true);
-    const query = extractUnsplashQuery(title);
-    const image = await fetchUnsplashImage(query);
-    setIsFetchingImage(false);
-
-    if (image) {
-      const currentPres = presentationRef.current;
-      if (!currentPres) return;
-      const target = currentPres.slides.find(s => s.id === newSlideId);
-      if (!target) return;
-      const withBg = updateSlide(currentPres, {
-        ...target,
-        backgroundImageUrl: image.url,
-        backgroundImageAlt: image.alt,
-        unsplashCredit: image.credit,
-      });
-      setPresentation(withBg);
-      presentationRef.current = withBg;
-    }
-  }, [finalizeCurrentSlide, addSlide, updateSlide]);
+    // Show the "Composing next slide" pill immediately so the user gets visual
+    // confirmation that the command was heard. Only set the React state here —
+    // NOT isGeneratingRef, which is the guard inside generateSlideFromBuffer.
+    // Setting isGeneratingRef here would cause generateSlideFromBuffer to
+    // return early every time and never actually run.
+    setIsGenerating(true);
+  }, [finalizeCurrentSlide, addSlide]);
 
   // ── End presentation ───────────────────────────────────────────────────────
   const endPresentation = useCallback(() => {
@@ -752,6 +762,13 @@ export default function PresentationView() {
     // Flush any remaining buffer content as a final slide
     const remaining = transcriptBufferRef.current.trim();
     transcriptBufferRef.current = '';
+    // Discard sentence buffer — no partial bullets at end of presentation
+    sentenceBufferRef.current = '';
+    if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+    // Clear generating state so the spinner doesn't persist on the ended screen
+    isGeneratingRef.current = false;
+    setIsGenerating(false);
+    blankSlideIdRef.current = null;
     const finalPres = finalizeCurrentSlide();
     if (finalPres) saveOrUpdate(finalPres);
     setPhase('ended');
@@ -765,6 +782,49 @@ export default function PresentationView() {
     cmdFeedbackCounterRef.current += 1;
     setCmdFeedback({ msg, id: cmdFeedbackCounterRef.current });
     cmdFeedbackTimerRef.current = setTimeout(() => setCmdFeedback(null), 2200);
+  }, []);
+
+  // ── Flush sentence buffer → AI summarize → add clean bullet ──────────────
+  const flushSentenceBuffer = useCallback(async () => {
+    // Cancel the pause timer so it doesn't fire again for this batch
+    if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+
+    // Guard: if a summarization is already in-flight, leave the buffer intact
+    // so the accumulated text survives for the next flush.
+    if (isSentenceFlushingRef.current) return;
+
+    const buffer = sentenceBufferRef.current.trim();
+    if (!buffer) return;
+
+    // Quick pre-filter: skip obviously empty/noise captures before the API call
+    const wordCount = buffer.split(/\s+/).filter(Boolean).length;
+    if (wordCount < 4) {
+      console.log('[Wingman SentBuf] Skipping short buffer:', `"${buffer.slice(0, 50)}"`, `(${wordCount} words)`);
+      sentenceBufferRef.current = '';
+      return;
+    }
+
+    const pres = presentationRef.current;
+    if (!pres || phaseRef.current !== 'speaking') { sentenceBufferRef.current = ''; return; }
+
+    // Claim the buffer now — clear it before the async call so incoming text
+    // that arrives during the API round-trip starts a fresh accumulation.
+    sentenceBufferRef.current = '';
+    isSentenceFlushingRef.current = true;
+    console.log('[Wingman SentBuf] Summarizing:', `"${buffer.slice(0, 80)}"...`);
+
+    try {
+      const bullet = await summarizeSpeechToBullet(buffer, pres.title);
+      if (bullet && bullet.length >= 3 && phaseRef.current === 'speaking') {
+        setActiveBullets(prev => {
+          const next = [...prev, bullet].slice(-5);
+          activeBulletsRef.current = next;
+          return next;
+        });
+      }
+    } finally {
+      isSentenceFlushingRef.current = false;
+    }
   }, []);
 
   // ── Add an explicit bullet (voice command) ─────────────────────────────────
@@ -828,6 +888,13 @@ export default function PresentationView() {
   const handleTranscript = useCallback((text: string, isFinal: boolean) => {
     if (!isFinal) {
       setLiveTranscript(text);
+      // Reset pause timer while speech is still in progress (don't flush mid-sentence)
+      if (sentenceBufferRef.current.trim() && pauseTimerRef.current) {
+        clearTimeout(pauseTimerRef.current);
+        pauseTimerRef.current = setTimeout(() => {
+          if (sentenceBufferRef.current.trim()) flushSentenceBuffer();
+        }, SENTENCE_PAUSE_MS);
+      }
       return;
     }
 
@@ -855,45 +922,26 @@ export default function PresentationView() {
       return;
     }
 
-    // ── Theme shift → flush current buffer, then start new slide ───────────
-    const afterShift = detectThemeShift(text);
-    if (afterShift !== null) {
-      const currentBuffer = transcriptBufferRef.current.trim();
-      transcriptBufferRef.current = '';
-      lastSlideTimeRef.current = Date.now();
-
-      if (currentBuffer.split(/\s+/).filter(Boolean).length >= 10) {
-        // Enough buffered content → generate a slide from it, then
-        // seed the next buffer with the post-shift context
-        generateSlideFromBuffer(currentBuffer).then(() => {
-          transcriptBufferRef.current = afterShift;
-        });
-      } else {
-        // Buffer too short for its own slide; use the legacy theme-shift handler
-        startNewSlide(extractTitleFromShift(afterShift, text));
-        transcriptBufferRef.current = afterShift;
-      }
-      return;
-    }
-
-    // ── Force-next slide → flush current buffer, then start new slide ──────
-    const forceNextContext = detectForceNext(text);
-    if (forceNextContext !== null) {
+    // ── Force-next slide ─────────────────────────────────────────────────────
+    // Trigger phrase can appear anywhere in the utterance. Strip it and pass
+    // any surrounding words into the new slide's buffer normally.
+    const remaining = stripForceNextPhrase(text);
+    if (remaining !== null) {
       flashCmdFeedback('Next slide →');
-      const currentBuffer = transcriptBufferRef.current.trim();
-      transcriptBufferRef.current = '';
-      lastSlideTimeRef.current = Date.now();
 
-      if (currentBuffer.split(/\s+/).filter(Boolean).length >= 10) {
-        // Enough buffered content → generate a slide from it, then
-        // seed the next buffer with the post-shift context
-        generateSlideFromBuffer(currentBuffer).then(() => {
-          transcriptBufferRef.current = forceNextContext;
-        });
-      } else {
-        // Buffer too short for its own slide; use the legacy theme-shift handler
-        startNewSlide(extractTitleFromShift(forceNextContext, text));
-        transcriptBufferRef.current = forceNextContext;
+      // Always create a blank slide immediately. startBlankSlide clears both
+      // buffers synchronously as its very first action, so seeding them
+      // afterwards is safe (we're writing to the NEW slide's buffers).
+      startBlankSlide();
+
+      const clean = removeFiller(remaining).trim();
+      if (clean.length >= 5) {
+        transcriptBufferRef.current = clean;
+        sentenceBufferRef.current   = clean;
+        // Don't flush the sentence buffer here — the blank slide sentinel is
+        // active and generateSlideFromBuffer hasn't run yet. Flushing now would
+        // put bullets on a slide that has no title or background yet.
+        // The accumulation loop below will handle flushing once the title lands.
       }
       return;
     }
@@ -904,26 +952,56 @@ export default function PresentationView() {
 
     transcriptBufferRef.current += (transcriptBufferRef.current ? ' ' : '') + clean;
 
-    // Show the sentence as a live bullet — formatBulletPoint filters fragments
-    // and meta-speech, returning null for anything that shouldn't appear on slide
-    const bullet = formatBulletPoint(clean);
-    if (bullet && bullet.length >= 5) {
-      setActiveBullets(prev => {
-        const next = [...prev, bullet].slice(-6); // up to 6 bullets per slide
-        activeBulletsRef.current = next;
-        return next;
-      });
+    // ── Sentence buffer — accumulate for AI bullet summarization ─────────────
+    // Raw speech is never shown on the slide; it accumulates here until one of:
+    //   a) sentence-ending punctuation detected   → flush immediately
+    //   b) 2 s pause in speech                    → flush via timer
+    //   c) buffer reaches 30 words                → flush immediately
+    //
+    // Exception: while the blank-slide sentinel is active we hold off flushing.
+    // generateSlideFromBuffer will clear the buffer and seed the slide with
+    // AI-produced title + bullets together, so the title always lands first.
+    sentenceBufferRef.current += (sentenceBufferRef.current ? ' ' : '') + clean;
+    const bufWordCount = sentenceBufferRef.current.split(/\s+/).filter(Boolean).length;
+
+    const blankPending =
+      blankSlideIdRef.current !== null &&
+      blankSlideIdRef.current === activeSlideIdRef.current;
+
+    if (!blankPending) {
+      if (bufWordCount >= SENTENCE_WORD_LIMIT) {
+        // Trigger (c): word limit reached
+        if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+        flushSentenceBuffer();
+      } else if (endsWithSentenceBoundary(clean)) {
+        // Trigger (a): sentence boundary
+        if (pauseTimerRef.current) { clearTimeout(pauseTimerRef.current); pauseTimerRef.current = null; }
+        flushSentenceBuffer();
+      } else {
+        // Trigger (b): reset pause timer on every new final transcript
+        if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current);
+        pauseTimerRef.current = setTimeout(() => {
+          if (sentenceBufferRef.current.trim()) flushSentenceBuffer();
+        }, SENTENCE_PAUSE_MS);
+      }
     }
 
-    // ── Word-count threshold → auto-generate slide ─────────────────────────
-    const wordCount = transcriptBufferRef.current.split(/\s+/).filter(Boolean).length;
-    if (wordCount >= WORD_THRESHOLD) {
-      const buffer = transcriptBufferRef.current;
-      transcriptBufferRef.current = '';
-      lastSlideTimeRef.current = Date.now();
-      generateSlideFromBuffer(buffer);
+    // ── Auto-populate blank placeholder ──────────────────────────────────────
+    // Once 5 words have accumulated after "next slide", fire generateSlideFromBuffer
+    // to infer the title and fetch the background image. This replaces the
+    // "Composing" spinner that startBlankSlide activated and populates the slide.
+    if (
+      blankSlideIdRef.current !== null &&
+      blankSlideIdRef.current === activeSlideIdRef.current
+    ) {
+      const tbWords = transcriptBufferRef.current.split(/\s+/).filter(Boolean).length;
+      if (tbWords >= 5) {
+        const snapshot = transcriptBufferRef.current;
+        transcriptBufferRef.current = '';
+        generateSlideFromBuffer(snapshot);
+      }
     }
-  }, [endPresentation, startNewSlide, generateSlideFromBuffer, addExplicitBullet, updateCurrentSlideTitle, refreshBackground, flashCmdFeedback]);
+  }, [endPresentation, startBlankSlide, generateSlideFromBuffer, addExplicitBullet, updateCurrentSlideTitle, refreshBackground, flashCmdFeedback, flushSentenceBuffer]);
 
   const { isSupported, isListening: wsListening, error: wsError, start: wsStart, stop: wsStop, retry: wsRetry } = useSpeechRecognition(
     handleTranscript,
@@ -991,22 +1069,6 @@ export default function PresentationView() {
     return () => clearTimeout(t);
   }, [speechError]);
 
-  // ── Time-based slide generation safety net ─────────────────────────────────
-  useEffect(() => {
-    if (phase !== 'speaking') return;
-    const timer = setInterval(() => {
-      const elapsed = Date.now() - lastSlideTimeRef.current;
-      const buffer = transcriptBufferRef.current;
-      const wordCount = buffer.split(/\s+/).filter(Boolean).length;
-      if (elapsed >= TIME_THRESHOLD && wordCount >= MIN_WORDS_FOR_TIME && !isGeneratingRef.current) {
-        transcriptBufferRef.current = '';
-        lastSlideTimeRef.current = Date.now();
-        generateSlideFromBuffer(buffer);
-      }
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [phase, generateSlideFromBuffer]);
-
   // ── Start speaking ─────────────────────────────────────────────────────────
   const startSpeaking = useCallback(() => {
     setPermissionError(null);
@@ -1020,7 +1082,6 @@ export default function PresentationView() {
     const doStart = () => {
       // Reset buffer state at start of each speaking session
       transcriptBufferRef.current = '';
-      lastSlideTimeRef.current = Date.now();
       isGeneratingRef.current = false;
       // Only start Web Speech API when in webspeech mode
       // (Whisper activates automatically via whisperActive once phase = 'speaking')

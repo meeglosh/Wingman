@@ -246,7 +246,7 @@ export function LiveSlideView({
 
         {/* Accent rule — appears when bullets are present */}
         <AnimatePresence>
-          {(displayBullets.length > 0 || (liveBullet && !showCC)) && (
+          {displayBullets.length > 0 && (
             <motion.div
               initial={{ scaleX: 0, opacity: 0 }}
               animate={{ scaleX: 1, opacity: 1 }}
@@ -309,43 +309,6 @@ export function LiveSlideView({
             ))}
           </AnimatePresence>
 
-          {/* Ghost / live interim bullet (shown when CC is OFF) */}
-          <AnimatePresence>
-            {liveBullet && !showCC && (
-              <motion.div
-                key="live-bullet"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}
-              >
-                <div
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: '50%',
-                    background: 'rgba(167,139,250,0.35)',
-                    flexShrink: 0,
-                    marginTop: 11,
-                    animation: 'pulse 1.2s ease-in-out infinite',
-                  }}
-                />
-                <p
-                  style={{
-                    color: 'rgba(255,255,255,0.38)',
-                    fontSize: 'clamp(1rem, 2vw, 1.4rem)',
-                    lineHeight: 1.45,
-                    fontStyle: 'italic',
-                    fontFamily: '"Space Grotesk", "Inter", system-ui, sans-serif',
-                    margin: 0,
-                  }}
-                >
-                  {liveBullet}
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </div>
 

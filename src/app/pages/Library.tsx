@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Mic, Edit3, Play, Trash2, Clock, Layers, ArrowLeft } from 'lucide-react';
+import { Plus, Mic, Edit3, Play, Trash2, Clock, Layers, Search, ChevronDown } from 'lucide-react';
 import { usePresentations } from '../context/PresentationContext';
 import { SLIDE_THEMES } from '../utils/themes';
 import type { Presentation } from '../types/presentation';
+
+type SortKey = 'updated' | 'created' | 'alpha' | 'slides';
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'updated', label: 'Last updated' },
+  { key: 'created', label: 'Date created' },
+  { key: 'alpha',   label: 'A → Z' },
+  { key: 'slides',  label: 'Most slides' },
+];
 
 function formatDate(ts: number) {
   const d = new Date(ts);
@@ -145,6 +153,37 @@ function PresentationCard({
 export default function Library() {
   const navigate = useNavigate();
   const { presentations, removePresentation } = usePresentations();
+  const [query, setQuery]       = useState('');
+  const [sortKey, setSortKey]   = useState<SortKey>('updated');
+  const [sortOpen, setSortOpen] = useState(false);
+  const sortRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!sortOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) {
+        setSortOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [sortOpen]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = q
+      ? presentations.filter(p => p.title.toLowerCase().includes(q))
+      : [...presentations];
+    switch (sortKey) {
+      case 'updated': list.sort((a, b) => b.updatedAt - a.updatedAt); break;
+      case 'created': list.sort((a, b) => b.createdAt - a.createdAt); break;
+      case 'alpha':   list.sort((a, b) => a.title.localeCompare(b.title)); break;
+      case 'slides':  list.sort((a, b) => b.slides.length - a.slides.length); break;
+    }
+    return list;
+  }, [presentations, query, sortKey]);
+
+  const sortLabel = SORT_OPTIONS.find(o => o.key === sortKey)?.label ?? '';
 
   return (
     <div
@@ -211,30 +250,134 @@ export default function Library() {
           </motion.div>
         ) : (
           <>
-            <div className="mb-8">
-              <h1 className="text-white mb-1" style={{ fontSize: 26, fontWeight: 700 }}>Your Presentations</h1>
-              <p style={{ color: '#64748B', fontSize: 14 }}>
-                {presentations.length} presentation{presentations.length !== 1 ? 's' : ''}
-              </p>
+            {/* Title + controls row */}
+            <div className="mb-8 flex flex-col gap-5">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <h1 className="text-white mb-1" style={{ fontSize: 26, fontWeight: 700 }}>Your Presentations</h1>
+                  <p style={{ color: '#64748B', fontSize: 14 }}>
+                    {filtered.length === presentations.length
+                      ? `${presentations.length} presentation${presentations.length !== 1 ? 's' : ''}`
+                      : `${filtered.length} of ${presentations.length} match`}
+                  </p>
+                </div>
+              </div>
+
+              {/* Search + sort */}
+              <div className="flex items-center gap-3">
+                {/* Search input */}
+                <div className="relative flex-1" style={{ maxWidth: 360 }}>
+                  <Search
+                    size={15}
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{ color: '#64748B' }}
+                  />
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    placeholder="Search presentations…"
+                    className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm text-white placeholder-[#64748B] outline-none focus:ring-1"
+                    style={{
+                      background: '#13141C',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      fontFamily: 'inherit',
+                    }}
+                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(124,58,237,0.5)')}
+                    onBlur={e  => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}
+                  />
+                </div>
+
+                {/* Sort dropdown */}
+                <div className="relative" ref={sortRef}>
+                  <button
+                    onClick={() => setSortOpen(o => !o)}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white"
+                    style={{
+                      background: '#13141C',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      fontFamily: 'inherit',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {sortLabel}
+                    <ChevronDown size={14} style={{ color: '#64748B', transform: sortOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                  </button>
+
+                  <AnimatePresence>
+                    {sortOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute right-0 mt-1 rounded-xl overflow-hidden"
+                        style={{
+                          background: '#1A1B25',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+                          zIndex: 50,
+                          minWidth: 160,
+                        }}
+                      >
+                        {SORT_OPTIONS.map(opt => (
+                          <button
+                            key={opt.key}
+                            onClick={() => { setSortKey(opt.key); setSortOpen(false); }}
+                            className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-left transition-colors"
+                            style={{
+                              color: sortKey === opt.key ? '#A78BFA' : 'rgba(255,255,255,0.75)',
+                              background: sortKey === opt.key ? 'rgba(124,58,237,0.12)' : 'transparent',
+                              fontFamily: 'inherit',
+                            }}
+                            onMouseEnter={e => { if (sortKey !== opt.key) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.05)'; }}
+                            onMouseLeave={e => { if (sortKey !== opt.key) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                          >
+                            {opt.label}
+                            {sortKey === opt.key && (
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                <path d="M2 6l3 3 5-5" stroke="#A78BFA" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
             </div>
 
-            <motion.div
-              layout
-              className="grid gap-5"
-              style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
-            >
-              <AnimatePresence>
-                {presentations.map(p => (
-                  <PresentationCard
-                    key={p.id}
-                    presentation={p}
-                    onPresent={() => navigate(`/playback/${p.id}`)}
-                    onEdit={() => navigate(`/edit/${p.id}`)}
-                    onDelete={() => removePresentation(p.id)}
-                  />
-                ))}
-              </AnimatePresence>
-            </motion.div>
+            {/* Results */}
+            {filtered.length === 0 ? (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="flex flex-col items-center justify-center py-24 text-center"
+              >
+                <Search size={32} style={{ color: '#64748B', marginBottom: 16 }} />
+                <p className="text-white mb-1" style={{ fontSize: 17, fontWeight: 600 }}>No results for "{query}"</p>
+                <p style={{ color: '#64748B', fontSize: 14 }}>Try a different search term.</p>
+              </motion.div>
+            ) : (
+              <motion.div
+                layout
+                className="grid gap-5"
+                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+              >
+                <AnimatePresence>
+                  {filtered.map(p => (
+                    <PresentationCard
+                      key={p.id}
+                      presentation={p}
+                      onPresent={() => navigate(`/playback/${p.id}`)}
+                      onEdit={() => navigate(`/edit/${p.id}`)}
+                      onDelete={() => removePresentation(p.id)}
+                    />
+                  ))}
+                </AnimatePresence>
+              </motion.div>
+            )}
           </>
         )}
       </main>
