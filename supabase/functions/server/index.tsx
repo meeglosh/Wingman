@@ -191,6 +191,76 @@ Speech transcript to convert: "${transcript}"`;
   }
 });
 
+// ── Bullet Summarizer ────────────────────────────────────────────────────────
+// Takes a short speech excerpt and returns a single clean bullet point.
+app.post("/make-server-8474fcb9/summarize-bullet", async (c) => {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) return c.json({ error: "OPENAI_API_KEY not configured" }, 500);
+
+  let body: { text: string; presentationTitle?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+
+  const { text, presentationTitle = "" } = body;
+  const wordCount = text?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+  if (!text || wordCount < 3) {
+    return c.json({ bullet: null });
+  }
+
+  const systemPrompt = `You are a presentation assistant. Convert the following spoken text into a single concise bullet point of no more than 10 words. The bullet must be a complete, meaningful sentence or phrase -- never a fragment. If the text is unclear or too short to summarize meaningfully, return nothing.`;
+
+  const userPrompt = `Presentation: "${presentationTitle || "Untitled"}"
+Speech: "${text.trim()}"`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        max_tokens: 60,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.log("OpenAI bullet summarizer error:", res.status, errText);
+      return c.json({ error: `OpenAI error ${res.status}` }, 502);
+    }
+
+    const data = await res.json();
+    const raw = (data.choices?.[0]?.message?.content ?? "").trim();
+
+    if (!raw || raw.toLowerCase() === "nothing" || raw.length < 3) {
+      console.log("Bullet summarizer: no meaningful content");
+      return c.json({ bullet: null });
+    }
+
+    const bullet = raw
+      .replace(/^["'`]|["'`]$/g, "")
+      .replace(/[.!?,;:]+$/, "")
+      .trim();
+
+    const capitalized = bullet.charAt(0).toUpperCase() + bullet.slice(1);
+    console.log("Summarized bullet:", capitalized);
+    return c.json({ bullet: capitalized });
+  } catch (e) {
+    console.log("Bullet summarizer error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 // ── Whisper Audio Transcription ──────────────────────────────────────────────
 app.post("/make-server-8474fcb9/transcribe", async (c) => {
   const apiKey = Deno.env.get("OPENAI_API_KEY");

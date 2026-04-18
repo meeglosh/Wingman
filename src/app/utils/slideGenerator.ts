@@ -327,6 +327,46 @@ export function generateTitleSlide(presentationTitle: string): { layout: SlideLa
   };
 }
 
+/**
+ * Sends a short speech excerpt to the AI and gets back a single clean bullet
+ * point (max 10 words). Falls back to formatBulletPoint (local processing —
+ * not raw text) if the AI endpoint is unavailable or returns nothing, so that
+ * bullets always appear even when the edge function is unreachable.
+ */
+export async function summarizeSpeechToBullet(
+  text: string,
+  presentationTitle: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://${projectId}.supabase.co/functions/v1/make-server-8474fcb9/summarize-bullet`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify({ text, presentationTitle }),
+      },
+    );
+
+    if (!res.ok) {
+      console.warn('[Wingman] Bullet summarizer HTTP error:', res.status, '— using local fallback');
+      return formatBulletPoint(text);
+    }
+
+    const data = await res.json();
+    if (data.error || !data.bullet) {
+      console.warn('[Wingman] Bullet summarizer returned no bullet — using local fallback');
+      return formatBulletPoint(text);
+    }
+    return data.bullet as string;
+  } catch (e) {
+    console.warn('[Wingman] Bullet summarizer threw:', e, '— using local fallback');
+    return formatBulletPoint(text);
+  }
+}
+
 export async function generateSlideWithAI(
   transcript: string,
   previousSlides: Slide[],
