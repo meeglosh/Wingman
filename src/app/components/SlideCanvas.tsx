@@ -210,7 +210,8 @@ export function SlideCanvas({
               alt={slide.backgroundImageAlt ?? ''}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }}
             />
-            <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: `rgba(0,0,0,${slide.backgroundOverlayOpacity ?? 0.45})` }} />
+            <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: 'linear-gradient(to right, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0.15) 100%)' }} />
+            <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: 'linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.32) 40%, transparent 70%)' }} />
           </>
         )}
 

@@ -53,10 +53,8 @@ export function SlideRenderer({ slide, theme, scale = 1, isActive, liveTranscrip
               objectFit: 'cover',
             }}
           />
-          <div style={{
-            position: 'absolute', inset: 0, zIndex: 1,
-            background: `rgba(0,0,0,${slide.backgroundOverlayOpacity ?? 0.45})`,
-          }} />
+          <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: 'linear-gradient(to right, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0.15) 100%)' }} />
+          <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: 'linear-gradient(to top, rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.32) 40%, transparent 70%)' }} />
         </>
       )}
 
@@ -207,32 +205,27 @@ function TitleLayout({ content, theme }: { content: Slide['content']; theme: Sli
 function ContentLayout({ content, theme }: { content: Slide['content']; theme: SlideTheme }) {
   const bullets = content.bullets ?? [];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '0 0 80px 0' }}>
-      {/* Header bar */}
-      <div style={{ height: 6, background: theme.accentColor, width: '100%' }} />
-      <div style={{ padding: '40px 72px 0' }}>
-        <h2 style={{ color: theme.titleColor, fontSize: 52, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em', lineHeight: 1.15, fontFamily: 'inherit' }}>
-          {content.title}
-        </h2>
-        <div style={{ height: 3, width: 56, background: theme.accentColor, borderRadius: 2, marginBottom: 40 }} />
-      </div>
-      <div style={{ padding: '0 72px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 20 }}>
-        {bullets.map((bullet, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 20 }}>
-            <div style={{
-              width: 10, height: 10, borderRadius: '50%',
-              background: theme.accentColor,
-              flexShrink: 0, marginTop: 14,
-            }} />
-            <p style={{ color: theme.textColor, fontSize: 28, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
-              {bullet}
-            </p>
-          </div>
-        ))}
-        {content.body && (
-          <p style={{ color: theme.textColor, fontSize: 28, lineHeight: 1.6, margin: 0, fontFamily: 'inherit' }}>{content.body}</p>
-        )}
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%', padding: '80px 72px', maxWidth: '75%' }}>
+      <h2 style={{ color: theme.titleColor, fontSize: 64, fontWeight: 800, margin: 0, letterSpacing: '-0.02em', lineHeight: 1.08, fontFamily: 'inherit' }}>
+        {content.title}
+      </h2>
+      {(bullets.length > 0 || content.body) && (
+        <>
+          <div style={{ width: 48, height: 3, background: theme.accentColor, borderRadius: 2, margin: '28px 0' }} />
+          {bullets.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {bullets.map((bullet, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: theme.accentColor, flexShrink: 0, marginTop: 11 }} />
+                  <p style={{ color: theme.textColor, fontSize: 26, margin: 0, lineHeight: 1.45, fontFamily: 'inherit' }}>{bullet}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: theme.textColor, fontSize: 28, lineHeight: 1.6, margin: 0, fontFamily: 'inherit' }}>{content.body}</p>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -240,32 +233,23 @@ function ContentLayout({ content, theme }: { content: Slide['content']; theme: S
 function BulletsLayout({ content, theme }: { content: Slide['content']; theme: SlideTheme }) {
   const bullets = content.bullets ?? [];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ height: 6, background: theme.accentColor, width: '100%' }} />
-      <div style={{ padding: '40px 72px 0' }}>
-        <h2 style={{ color: theme.titleColor, fontSize: 48, fontWeight: 700, margin: '0 0 8px', letterSpacing: '-0.02em', fontFamily: 'inherit' }}>
-          {content.title}
-        </h2>
-        <div style={{ height: 3, width: 56, background: theme.accentColor, borderRadius: 2, marginBottom: 32 }} />
-      </div>
-      <div style={{ padding: '0 72px', columns: bullets.length > 4 ? 2 : 1, columnGap: 48, flex: 1 }}>
-        {bullets.map((bullet, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 20, breakInside: 'avoid' }}>
-            <div style={{
-              width: 32, height: 32, borderRadius: '50%',
-              background: theme.borderColor,
-              border: `2px solid ${theme.accentColor}`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0, marginTop: 2,
-            }}>
-              <span style={{ color: theme.accentColor, fontSize: 14, fontWeight: 700, fontFamily: 'inherit' }}>{i + 1}</span>
-            </div>
-            <p style={{ color: theme.textColor, fontSize: 24, margin: 0, lineHeight: 1.5, fontFamily: 'inherit' }}>
-              {bullet}
-            </p>
+    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%', padding: '80px 72px', maxWidth: '75%' }}>
+      <h2 style={{ color: theme.titleColor, fontSize: 64, fontWeight: 800, margin: 0, letterSpacing: '-0.02em', lineHeight: 1.08, fontFamily: 'inherit' }}>
+        {content.title}
+      </h2>
+      {bullets.length > 0 && (
+        <>
+          <div style={{ width: 48, height: 3, background: theme.accentColor, borderRadius: 2, margin: '28px 0' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {bullets.map((bullet, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', background: theme.accentColor, flexShrink: 0, marginTop: 11 }} />
+                <p style={{ color: theme.textColor, fontSize: 26, margin: 0, lineHeight: 1.45, fontFamily: 'inherit' }}>{bullet}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
     </div>
   );
 }

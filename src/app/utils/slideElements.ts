@@ -42,27 +42,27 @@ export function layoutToElements(slide: Slide, theme: SlideTheme): SlideElement[
       const bullets = content.bullets ?? [];
       const bodyText = content.body
         ? content.body
-        : bullets.map(b => `• ${b}`).join('\n');
+        : bullets.map(b => `• ${b}`).join('\n\n');
       return [
-        el({ type: 'text', x: 72, y: 60, width: 1136, height: 90,
+        el({ type: 'text', x: 72, y: 200, width: 960, height: 100,
           content: content.title,
-          fontSize: 52, fontWeight: 'bold', color: titleColor }, 1),
-        el({ type: 'text', x: 72, y: 180, width: 1136, height: 480,
+          fontSize: 60, fontWeight: 'bold', color: titleColor }, 1),
+        el({ type: 'text', x: 72, y: 330, width: 960, height: 340,
           content: bodyText,
-          fontSize: 28, color: textColor }, 2),
+          fontSize: 26, color: textColor }, 2),
       ];
     }
 
     case 'bullets': {
       const bullets = content.bullets ?? [];
-      const bodyText = bullets.map((b, i) => `${i + 1}.  ${b}`).join('\n\n');
+      const bodyText = bullets.map(b => `• ${b}`).join('\n\n');
       return [
-        el({ type: 'text', x: 72, y: 50, width: 1136, height: 80,
+        el({ type: 'text', x: 72, y: 200, width: 960, height: 100,
           content: content.title,
-          fontSize: 48, fontWeight: 'bold', color: titleColor }, 1),
-        el({ type: 'text', x: 72, y: 160, width: 1136, height: 510,
+          fontSize: 60, fontWeight: 'bold', color: titleColor }, 1),
+        el({ type: 'text', x: 72, y: 330, width: 960, height: 340,
           content: bodyText,
-          fontSize: 24, color: textColor }, 2),
+          fontSize: 26, color: textColor }, 2),
       ];
     }
 
@@ -90,9 +90,9 @@ export function layoutToElements(slide: Slide, theme: SlideTheme): SlideElement[
       const cols = stats.length <= 2 ? 2 : stats.length <= 3 ? 3 : 4;
       const slotW = Math.floor((1136 - (cols - 1) * 24) / cols);
       const elements: SlideElement[] = [
-        el({ type: 'text', x: 72, y: 50, width: 1136, height: 80,
+        el({ type: 'text', x: 72, y: 50, width: 1136, height: 90,
           content: content.title,
-          fontSize: 48, fontWeight: 'bold', color: titleColor }, 1),
+          fontSize: 60, fontWeight: 'bold', color: titleColor }, 1),
       ];
       stats.slice(0, cols).forEach((stat, i) => {
         const sx = 72 + i * (slotW + 24);
@@ -112,15 +112,15 @@ export function layoutToElements(slide: Slide, theme: SlideTheme): SlideElement[
       const left = content.leftColumn ?? content.bullets?.slice(0, 3) ?? [];
       const right = content.rightColumn ?? content.bullets?.slice(3, 6) ?? [];
       return [
-        el({ type: 'text', x: 72, y: 50, width: 1136, height: 80,
+        el({ type: 'text', x: 72, y: 60, width: 1136, height: 90,
           content: content.title,
-          fontSize: 48, fontWeight: 'bold', color: titleColor }, 1),
-        el({ type: 'text', x: 72, y: 160, width: 544, height: 500,
+          fontSize: 60, fontWeight: 'bold', color: titleColor }, 1),
+        el({ type: 'text', x: 72, y: 185, width: 540, height: 480,
           content: left.map(s => `• ${s}`).join('\n\n'),
-          fontSize: 24, color: textColor }, 2),
-        el({ type: 'text', x: 664, y: 160, width: 544, height: 500,
+          fontSize: 26, color: textColor }, 2),
+        el({ type: 'text', x: 668, y: 185, width: 540, height: 480,
           content: right.map(s => `• ${s}`).join('\n\n'),
-          fontSize: 24, color: textColor }, 3),
+          fontSize: 26, color: textColor }, 3),
       ];
     }
 

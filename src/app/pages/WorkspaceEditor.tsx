@@ -1296,12 +1296,16 @@ export default function WorkspaceEditor() {
   // Reset element selection when switching slides
   useEffect(() => { setSelectedElementId(null); }, [selectedIdx]);
 
-  // Auto-convert layout→elements the first time a slide is opened in the editor
+  // Auto-convert layout→elements the first time a slide is opened in the editor.
+  // Also re-converts slides with stale numbered-bullet format (legacy style).
   useEffect(() => {
     if (!presentation) return;
     const slide = presentation.slides[selectedIdx];
     if (!slide) return;
-    if (slide.elements && slide.elements.length > 0) return;
+    const hasOldNumberedBullets = slide.elements?.some(
+      e => e.type === 'text' && /^\d+\.\s{2}/.test(e.content ?? ''),
+    );
+    if (slide.elements && slide.elements.length > 0 && !hasOldNumberedBullets) return;
     const theme = getTheme(presentation.themeId);
     const elements = layoutToElements(slide, theme);
     if (elements.length === 0) return;
