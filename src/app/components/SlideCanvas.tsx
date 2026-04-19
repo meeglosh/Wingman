@@ -164,7 +164,9 @@ export function SlideCanvas({
   // ── Double-click → start text editing ──────────────────────────────────────
   const onElementDblClick = (e: React.MouseEvent, el: SlideElement) => {
     e.stopPropagation();
-    if (el.type === 'text') {
+    // Shape-style text elements (accent rule, bullet dots) have no text content
+    // and should never enter text-edit mode.
+    if (el.type === 'text' && !el.backgroundColor) {
       setEditingId(el.id);
     }
   };
@@ -307,10 +309,14 @@ export function SlideCanvas({
                       color: el.color ?? theme.textColor,
                       textAlign: el.textAlign ?? 'left',
                       fontFamily: el.fontFamily ?? 'inherit',
-                      lineHeight: 1.4,
+                      lineHeight: el.lineHeight ?? 1.4,
+                      letterSpacing: el.letterSpacing,
+                      textShadow: el.textShadow,
                       whiteSpace: 'pre-wrap',
                       overflow: 'hidden',
-                      padding: 4,
+                      padding: el.backgroundColor ? 0 : 4,
+                      background: el.backgroundColor,
+                      borderRadius: el.borderRadius ? el.borderRadius : undefined,
                       boxSizing: 'border-box',
                     }}
                   >

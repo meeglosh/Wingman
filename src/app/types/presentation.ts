@@ -41,6 +41,12 @@ export interface SlideElement {
   fontStyle?: 'normal' | 'italic';
   color?: string;
   textAlign?: 'left' | 'center' | 'right';
+  lineHeight?: number;
+  letterSpacing?: string;
+  textShadow?: string;
+  // Shape-style decorations — used by voice-generated slides to paint the
+  // purple accent rule and bullet dots as empty colored boxes.
+  backgroundColor?: string;
   // Image
   src?: string;
   alt?: string;

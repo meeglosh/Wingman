@@ -1297,7 +1297,8 @@ export default function WorkspaceEditor() {
   useEffect(() => { setSelectedElementId(null); }, [selectedIdx]);
 
   // Auto-convert layout→elements the first time a slide is opened in the editor.
-  // Also re-converts slides with stale numbered-bullet format (legacy style).
+  // Also re-generates elements when stale legacy formats are detected so the
+  // editable view stays in sync with the live view.
   useEffect(() => {
     if (!presentation) return;
     const slide = presentation.slides[selectedIdx];
@@ -1305,7 +1306,26 @@ export default function WorkspaceEditor() {
     const hasOldNumberedBullets = slide.elements?.some(
       e => e.type === 'text' && /^\d+\.\s{2}/.test(e.content ?? ''),
     );
-    if (slide.elements && slide.elements.length > 0 && !hasOldNumberedBullets) return;
+    // Voice-generated slides with bullets should have a purple accent rule element.
+    // If missing — or if a bullet text element is too short for its content
+    // (an earlier version used fixed-height rows that clipped long bullets) —
+    // regenerate so the editable view matches the live view.
+    const isVoiceLayout = slide.layout === 'bullets' || slide.layout === 'content' || slide.layout === 'title';
+    const hasBullets = (slide.content.bullets ?? []).length > 0;
+    const missingAccent = !slide.elements?.some(e => e.type === 'text' && e.backgroundColor === '#A78BFA');
+    const hasClippedBullet = !!slide.elements?.some(e =>
+      e.type === 'text' &&
+      e.fontSize === 24 &&
+      !e.backgroundColor &&
+      (e.content?.length ?? 0) > 50 &&
+      (e.height ?? 0) < 50
+    );
+    const needsVoiceRegen =
+      isVoiceLayout &&
+      hasBullets &&
+      !!slide.elements && slide.elements.length > 0 &&
+      (missingAccent || hasClippedBullet);
+    if (slide.elements && slide.elements.length > 0 && !hasOldNumberedBullets && !needsVoiceRegen) return;
     const theme = getTheme(presentation.themeId);
     const elements = layoutToElements(slide, theme);
     if (elements.length === 0) return;
