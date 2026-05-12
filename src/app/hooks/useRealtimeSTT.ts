@@ -157,7 +157,7 @@ export function useRealtimeSTT(
     const ws = new WebSocket(WS_URL, [
       'realtime',
       `openai-insecure-api-key.${token}`,
-      'openai-beta.realtime=v1',
+      'openai-beta.realtime-v1',
     ]);
     wsRef.current = ws;
 
