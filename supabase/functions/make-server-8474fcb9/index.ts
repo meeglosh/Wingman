@@ -1,7 +1,7 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
-import * as kv from "./kv_store.tsx";
+import * as kv from "./kv_store.ts";
 const app = new Hono();
 
 // Enable logger
@@ -267,7 +267,43 @@ Speech: "${text.trim()}"`;
   }
 });
 
-// ── Whisper Audio Transcription ──────────────────────────────────────────────
+// ── OpenAI Realtime Transcription Session ────────────────────────────────────
+// Creates a short-lived ephemeral token the browser uses to open a WebSocket
+// directly to OpenAI, keeping the API key server-side.
+app.post("/make-server-8474fcb9/realtime-session", async (c) => {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) return c.json({ error: "OPENAI_API_KEY not configured" }, 500);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/realtime/transcription_sessions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "realtime=v1",
+      },
+      body: JSON.stringify({}),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.log("Realtime session error:", res.status, err);
+      return c.json({ error: `OpenAI error ${res.status}: ${err}` }, res.status as any);
+    }
+
+    const session = await res.json();
+    console.log("Realtime session created, expires:", session.client_secret?.expires_at);
+    return c.json({
+      token: session.client_secret?.value,
+      expires_at: session.client_secret?.expires_at,
+    });
+  } catch (e) {
+    console.log("Realtime session error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ── Whisper Audio Transcription (legacy chunked fallback) ────────────────────
 app.post("/make-server-8474fcb9/transcribe", async (c) => {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) {
