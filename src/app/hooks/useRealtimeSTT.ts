@@ -171,8 +171,10 @@ export function useRealtimeSTT(
       ws.send(JSON.stringify({
         type: 'transcription_session.update',
         session: {
-          model: 'gpt-4o-transcribe',
           input_audio_format: 'pcm16',
+          input_audio_transcription: {
+            model: 'gpt-4o-transcribe',
+          },
           turn_detection: {
             type: 'server_vad',
             threshold: 0.5,
