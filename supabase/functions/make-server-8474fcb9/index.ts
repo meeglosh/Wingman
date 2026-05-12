@@ -282,7 +282,7 @@ app.post("/make-server-8474fcb9/realtime-session", async (c) => {
         "Content-Type": "application/json",
         "OpenAI-Beta": "realtime=v1",
       },
-      body: JSON.stringify({ model: "gpt-4o-transcribe" }),
+      body: JSON.stringify({}),
     });
 
     if (!res.ok) {
