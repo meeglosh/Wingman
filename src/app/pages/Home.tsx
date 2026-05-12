@@ -91,9 +91,9 @@ export default function Home() {
       {/* Header */}
       <header className="relative z-10 flex items-center justify-between px-8 py-6">
         {/* Logo */}
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #7C3AED, #4F46E5)' }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #7C3AED, #4F46E5)' }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 14 C9.5 11.5 5.5 9.5 2 11" stroke="white" strokeWidth="1.75" />
               <path d="M2 11 C5 8.5 9 11 12 14" stroke="white" strokeWidth="1.25" opacity="0.55" />
               <path d="M12 14 C14.5 11.5 18.5 9.5 22 11" stroke="white" strokeWidth="1.75" />
@@ -103,8 +103,8 @@ export default function Home() {
               <path d="M10 17 L12 15 L14 17" stroke="white" strokeWidth="1.5" />
             </svg>
           </div>
-          <div className="flex flex-col">
-            <span className="text-white" style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.1 }}>Wingman</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-white" style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1 }}>Wingman</span>
             <span style={{ color: '#64748B', fontSize: 11, fontWeight: 500, letterSpacing: '0.01em', lineHeight: 1 }}>For speakers who think on their feet.</span>
           </div>
         </div>
