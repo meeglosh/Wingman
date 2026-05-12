@@ -17,6 +17,8 @@ import {
 import type { Presentation, Slide } from '../types/presentation';
 import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 import { useRealtimeSTT } from '../hooks/useRealtimeSTT';
+import { useTranscriptionUsage, FREE_LIMIT_MINUTES } from '../hooks/useTranscriptionUsage';
+import { PaywallModal } from '../components/PaywallModal';
 
 type PresentationPhase = 'loading' | 'intro' | 'speaking' | 'ended';
 
@@ -365,6 +367,11 @@ export default function PresentationView() {
   // Tracks whether a force-next command was already fired from a partial result so the
   // subsequent final transcript for the same utterance doesn't double-trigger.
   const commandFiredFromPartialRef = useRef(false);
+  // Paywall
+  const [showPaywall, setShowPaywall] = useState(false);
+  const { minutesUsed, hasHitLimit, addSeconds, entitlement } = useTranscriptionUsage();
+  const hasHitLimitRef = useRef(hasHitLimit);
+  useEffect(() => { hasHitLimitRef.current = hasHitLimit; }, [hasHitLimit]);
   const cmdFeedbackTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cmdFeedbackCounterRef = useRef(0);
 
@@ -894,7 +901,20 @@ export default function PresentationView() {
       setSttMode('webspeech');
       if (phase === 'speaking') wsStart();
     },
+    () => {
+      // Called every second of active speech — increment usage and stop if limit hit
+      addSeconds(1);
+      if (hasHitLimitRef.current) rtStop();
+    },
   );
+
+  // Stop session and surface paywall when the limit is reached mid-session
+  useEffect(() => {
+    if (hasHitLimit && phase === 'speaking') {
+      endPresentation();
+      setShowPaywall(true);
+    }
+  }, [hasHitLimit, phase]);
 
   // ── Fallback STT: Web Speech API ────────────────────────────────────────────
   const { isSupported, isListening: wsListening, error: wsError, start: wsStart, stop: wsStop, retry: wsRetry } = useSpeechRecognition(
@@ -937,6 +957,7 @@ export default function PresentationView() {
 
   // ── Start speaking ─────────────────────────────────────────────────────────
   const startSpeaking = useCallback(() => {
+    if (hasHitLimitRef.current) { setShowPaywall(true); return; }
     setPermissionError(null);
 
     const permErrorMsg = IS_EMBEDDED
@@ -1152,6 +1173,17 @@ export default function PresentationView() {
                 )}
                 {permissionPending ? 'Requesting microphone…' : 'Start Speaking'}
               </motion.button>
+
+              {/* Usage indicator — hidden once paid */}
+              {!entitlement && (
+                <p className="mb-4 text-center" style={{
+                  fontSize: 12,
+                  color: minutesUsed >= 12 ? '#F59E0B' : '#334155',
+                  transition: 'color 0.3s',
+                }}>
+                  {minutesUsed.toFixed(1)} of {FREE_LIMIT_MINUTES} free minutes used
+                </p>
+              )}
 
               <button
                 onClick={() => navigate('/')}
@@ -1590,6 +1622,13 @@ export default function PresentationView() {
           </p>
         </div>
       )}
+
+      {/* ── Paywall modal ───────────────────────────────────────────── */}
+      <PaywallModal
+        open={showPaywall}
+        minutesUsed={minutesUsed}
+        onClose={() => setShowPaywall(false)}
+      />
     </div>
   );
 }

@@ -358,4 +358,91 @@ app.post("/make-server-8474fcb9/transcribe", async (c) => {
   }
 });
 
+// ── Stripe: Create Checkout Session ─────────────────────────────────────────
+app.post("/make-server-8474fcb9/create-checkout-session", async (c) => {
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+  if (!stripeKey) return c.json({ error: "STRIPE_SECRET_KEY not configured" }, 500);
+
+  const siteUrl = Deno.env.get("SITE_URL") ?? "https://wingman.design";
+
+  let body: { type: "credits" | "subscription" };
+  try { body = await c.req.json(); } catch {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+  if (body.type !== "credits" && body.type !== "subscription") {
+    return c.json({ error: "type must be 'credits' or 'subscription'" }, 400);
+  }
+
+  try {
+    const { default: Stripe } = await import("npm:stripe@14");
+    const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+
+    let session;
+    if (body.type === "credits") {
+      session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [{
+          price_data: {
+            currency: "usd",
+            product_data: { name: "Wingman AI Minutes — 120 min" },
+            unit_amount: 500,
+          },
+          quantity: 1,
+        }],
+        success_url: `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&type=credits`,
+        cancel_url: `${siteUrl}/`,
+      });
+    } else {
+      session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        line_items: [{
+          price_data: {
+            currency: "usd",
+            product_data: { name: "Wingman Unlimited" },
+            unit_amount: 1200,
+            recurring: { interval: "month" },
+          },
+          quantity: 1,
+        }],
+        success_url: `${siteUrl}/payment-success?session_id={CHECKOUT_SESSION_ID}&type=subscription`,
+        cancel_url: `${siteUrl}/`,
+      });
+    }
+
+    console.log("Checkout session created:", session.id, body.type);
+    return c.json({ url: session.url });
+  } catch (e) {
+    console.log("Stripe checkout error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
+// ── Stripe: Verify Payment ───────────────────────────────────────────────────
+app.post("/make-server-8474fcb9/verify-payment", async (c) => {
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+  if (!stripeKey) return c.json({ error: "STRIPE_SECRET_KEY not configured" }, 500);
+
+  let body: { sessionId: string };
+  try { body = await c.req.json(); } catch {
+    return c.json({ error: "Invalid request body" }, 400);
+  }
+  if (!body.sessionId) return c.json({ error: "sessionId required" }, 400);
+
+  try {
+    const { default: Stripe } = await import("npm:stripe@14");
+    const stripe = new Stripe(stripeKey, { apiVersion: "2024-06-20" });
+
+    const session = await stripe.checkout.sessions.retrieve(body.sessionId);
+    const valid =
+      session.payment_status === "paid" ||
+      session.status === "complete";
+
+    console.log("Verify payment:", body.sessionId, "valid:", valid);
+    return c.json({ valid });
+  } catch (e) {
+    console.log("Stripe verify error:", e);
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 Deno.serve(app.fetch);

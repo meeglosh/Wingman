@@ -48,27 +48,33 @@ export type RealtimeSTTStatus = 'idle' | 'connecting' | 'listening' | 'error';
 export function useRealtimeSTT(
   onTranscript: (text: string, isFinal: boolean) => void,
   onFatalError?: (reason: string) => void,
+  onSpeechSecond?: () => void,
 ) {
   const [isListening, setIsListening]   = useState(false);
   const [error, setError]               = useState<string | null>(null);
   const [status, setStatus]             = useState<RealtimeSTTStatus>('idle');
 
-  const shouldRunRef    = useRef(false);
-  const wsRef           = useRef<WebSocket | null>(null);
-  const audioCtxRef     = useRef<AudioContext | null>(null);
-  const workletNodeRef  = useRef<AudioWorkletNode | null>(null);
-  const streamRef       = useRef<MediaStream | null>(null);
-  const reconnectTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const workletBlobUrl  = useRef<string | null>(null);
+  const shouldRunRef      = useRef(false);
+  const wsRef             = useRef<WebSocket | null>(null);
+  const audioCtxRef       = useRef<AudioContext | null>(null);
+  const workletNodeRef    = useRef<AudioWorkletNode | null>(null);
+  const streamRef         = useRef<MediaStream | null>(null);
+  const reconnectTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const workletBlobUrl    = useRef<string | null>(null);
   // Accumulates partial deltas within a single VAD-detected utterance.
   // Reset when a final transcript arrives so the next utterance starts clean.
-  const partialAccRef   = useRef('');
+  const partialAccRef     = useRef('');
+  // VAD speech-active state + billing tick interval
+  const isSpeechActiveRef = useRef(false);
+  const tickIntervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Always-current callback refs so closures never go stale
-  const onTranscriptRef  = useRef(onTranscript);
-  const onFatalErrorRef  = useRef(onFatalError);
-  useEffect(() => { onTranscriptRef.current  = onTranscript;  });
-  useEffect(() => { onFatalErrorRef.current  = onFatalError;  });
+  const onTranscriptRef   = useRef(onTranscript);
+  const onFatalErrorRef   = useRef(onFatalError);
+  const onSpeechSecondRef = useRef(onSpeechSecond);
+  useEffect(() => { onTranscriptRef.current   = onTranscript;   });
+  useEffect(() => { onFatalErrorRef.current   = onFatalError;   });
+  useEffect(() => { onSpeechSecondRef.current = onSpeechSecond; });
 
   const teardownAudio = useCallback(() => {
     workletNodeRef.current?.disconnect();
@@ -91,6 +97,8 @@ export function useRealtimeSTT(
 
   const cleanup = useCallback(() => {
     if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+    if (tickIntervalRef.current) { clearInterval(tickIntervalRef.current); tickIntervalRef.current = null; }
+    isSpeechActiveRef.current = false;
     teardownWS();
     teardownAudio();
     setIsListening(false);
@@ -201,6 +209,12 @@ export function useRealtimeSTT(
       // Connect to destination keeps the worklet graph alive (Chrome quirk)
       worklet.connect(ctx.destination);
 
+      // Billing tick: fire onSpeechSecond once per second while VAD detects speech
+      if (tickIntervalRef.current) clearInterval(tickIntervalRef.current);
+      tickIntervalRef.current = setInterval(() => {
+        if (isSpeechActiveRef.current) onSpeechSecondRef.current?.();
+      }, 1000);
+
       setIsListening(true);
       setStatus('listening');
     };
@@ -228,9 +242,15 @@ export function useRealtimeSTT(
         }
       }
 
-      // Speech started → reset accumulator for the new utterance
+      // Speech started → reset accumulator, mark VAD active for billing
       else if (t === 'input_audio_buffer.speech_started') {
         partialAccRef.current = '';
+        isSpeechActiveRef.current = true;
+      }
+
+      // Speech stopped → pause billing tick
+      else if (t === 'input_audio_buffer.speech_stopped') {
+        isSpeechActiveRef.current = false;
       }
 
       // Final utterance — emit canonical text and reset accumulator
