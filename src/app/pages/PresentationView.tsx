@@ -842,25 +842,25 @@ export default function PresentationView() {
     const clean = removeFiller(text.trim());
     if (clean.length < 5) return;
 
-    transcriptBufferRef.current += (transcriptBufferRef.current ? ' ' : '') + clean;
+    // Realtime Whisper (and often Web Speech API) returns raw text without
+    // punctuation. Each final transcript already marks a sentence boundary
+    // (VAD silence detection), so we add a period here so flushSentenceBuffer
+    // can extract it immediately instead of waiting indefinitely.
+    const cleanPunctuated = endsWithSentenceBoundary(clean) ? clean : `${clean}.`;
 
-    // ── Sentence buffer — only flushes on sentence-ending punctuation ─────────
-    // Raw speech accumulates here. We ONLY produce a bullet when the speaker
-    // has finished a sentence (., ?, !) with enough meaningful content.
-    // Fragments stay buffered indefinitely — nothing renders until complete.
-    sentenceBufferRef.current += (sentenceBufferRef.current ? ' ' : '') + clean;
+    transcriptBufferRef.current += (transcriptBufferRef.current ? ' ' : '') + cleanPunctuated;
 
-    // Safety: if buffer grows absurdly large without any punctuation,
-    // drop the oldest half to prevent unbounded memory growth.
+    // ── Sentence buffer — flush on every final ────────────────────────────────
+    sentenceBufferRef.current += (sentenceBufferRef.current ? ' ' : '') + cleanPunctuated;
+
+    // Safety: if buffer grows absurdly large, drop the oldest half
     const bufWords = sentenceBufferRef.current.split(/\s+/).filter(Boolean);
     if (bufWords.length > SENTENCE_BUFFER_CAP) {
       sentenceBufferRef.current = bufWords.slice(-Math.floor(SENTENCE_BUFFER_CAP / 2)).join(' ');
     }
 
-    // Flush if this latest piece ended a sentence
-    if (endsWithSentenceBoundary(clean)) {
-      flushSentenceBuffer();
-    }
+    // Every final is a sentence boundary — flush immediately
+    flushSentenceBuffer();
 
     // ── Auto-populate blank placeholder ──────────────────────────────────────
     // Once 15 words have accumulated after "next slide", fire generateSlideFromBuffer
