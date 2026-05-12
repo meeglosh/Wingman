@@ -103,7 +103,10 @@ export default function Home() {
               <path d="M10 17 L12 15 L14 17" stroke="white" strokeWidth="1.5" />
             </svg>
           </div>
-          <span className="text-white" style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>Wingman</span>
+          <div className="flex flex-col">
+            <span className="text-white" style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.1 }}>Wingman</span>
+            <span style={{ color: '#64748B', fontSize: 11, fontWeight: 500, letterSpacing: '0.01em', lineHeight: 1 }}>For speakers who think on their feet.</span>
+          </div>
         </div>
 
         {/* Library link */}
@@ -158,9 +161,6 @@ export default function Home() {
               today?
             </span>
           </h1>
-          <p className="text-center mb-8" style={{ color: '#9B8EC4', fontSize: 15, fontWeight: 500, letterSpacing: '0.01em' }}>
-            For speakers who think on their feet.
-          </p>
           <p className="text-center mb-10" style={{ color: '#94A3B8', fontSize: 16, lineHeight: 1.6 }}>Describe your topic and Wingman will build the first slide. Then just speak; your presentation grows as you talk.</p>
 
           {/* Topic input card */}
